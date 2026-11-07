@@ -41,7 +41,24 @@ A committee member enters an order, another approves it, it fills automatically 
 
 ## Getting started
 
-_To be added: setup, how to run, and an architecture diagram._
+This repository now has the shared Next.js starter. The fund workflow and API routes are still being built. The local demo plan, screen ownership, routes, and sample JSON are in [the demo build spec](docs/DEMO_BUILD_SPEC.md).
+
+Use Node.js 20.9 or newer and npm:
+
+```bash
+npm ci
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Run `npm run lint` and `npm run build` before opening a pull request.
+
+Kellen's three screen files are `src/app/enter-order/page.tsx`, `src/app/orders/page.tsx`, and `src/app/dashboard/page.tsx`. The backend route handlers will live in `src/app/api/`, with SQLite and fund calculations under `src/lib/`. Both sides work in this one app and use the JSON shapes in the demo build spec.
+
+```text
+Screen (Next.js page) -> /api route (Next.js server) -> fund logic -> SQLite
+                                               ^
+                                      cached market prices
+```
 
 ## References
 
