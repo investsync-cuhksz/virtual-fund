@@ -32,7 +32,6 @@ function OrderForm() {
   }, [q]);
 
   useEffect(() => {
-    setPreview(null);
     if (!sel || !sizeOk) return;
     let live = true;
     const t = setTimeout(() => {
@@ -43,7 +42,7 @@ function OrderForm() {
     return () => { live = false; clearTimeout(t); };
   }, [sel, size, sizeOk, n]);
 
-  function clear() { setSel(null); setQ(''); setSize('6'); setPitch(''); setWhy(''); setMsg(null); }
+  function clear() { setSel(null); setPreview(null); setQ(''); setSize('6'); setPitch(''); setWhy(''); setMsg(null); }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,7 +72,7 @@ function OrderForm() {
             {sel ? (
               <div className="mt-1 flex items-center justify-between gap-3 rounded-lg bg-blue-50 px-3 py-2 text-sm">
                 <span className="font-semibold text-blue-900">{sel.ticker} {sel.name} · {sel.exchange} · {sel.currency} · {sel.sector}</span>
-                <button type="button" onClick={() => setSel(null)} className="font-semibold text-blue-800 underline">Change</button>
+                <button type="button" onClick={() => { setSel(null); setPreview(null); }} className="font-semibold text-blue-800 underline">Change</button>
               </div>
             ) : (
               <>
@@ -82,7 +81,7 @@ function OrderForm() {
                   {results.length === 0 && <li className="px-3 py-3 text-sm text-slate-600">No instrument matches that search.</li>}
                   {results.map((i) => (
                     <li key={i.ticker}>
-                      <button type="button" onClick={() => setSel(i)} className="grid min-h-11 w-full grid-cols-[4rem_1fr_auto] items-center gap-3 px-3 text-left text-sm hover:bg-blue-50">
+                      <button type="button" onClick={() => { setSel(i); setPreview(null); }} className="grid min-h-11 w-full grid-cols-[4rem_1fr_auto] items-center gap-3 px-3 text-left text-sm hover:bg-blue-50">
                         <span className="font-semibold">{i.ticker}</span>
                         <span>{i.name}</span>
                         <span className="text-slate-600">{i.exchange} · {i.sector}</span>
@@ -104,7 +103,7 @@ function OrderForm() {
             </div>
             <div>
               <label htmlFor="size" className="text-sm font-semibold">Size (% of NAV)</label>
-              <input id="size" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value)} placeholder="e.g. 6" aria-invalid={!sizeOk} className={field} />
+              <input id="size" inputMode="decimal" value={size} onChange={(e) => { setSize(e.target.value); setPreview(null); }} placeholder="e.g. 6" aria-invalid={!sizeOk} className={field} />
               <p className="mt-1 text-xs text-slate-600">
                 {!sizeOk ? 'Enter a size above 0, with up to 2 decimals.' : preview ? `About ${usd(preview.estimatedAmountCents)}` : 'Pick an instrument to see the amount.'}
               </p>

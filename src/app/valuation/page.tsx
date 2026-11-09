@@ -18,8 +18,15 @@ const STEPS = [
 const key = (x: ValuationRun) => JSON.stringify([x.date, x.status, x.filledOrderIds, x.navCents, x.cashCents]);
 const withFills = (rs: ValuationRun[]) => rs.filter((r) => r.filledOrderIds.length > 0);
 
+function nextTradingDate() {
+    const todayInNewYork = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    let date = new Date(`${todayInNewYork}T00:00:00Z`);
+    do { date = new Date(date.getTime() + 86_400_000); } while ([0, 6].includes(date.getUTCDay()));
+    return date.toISOString().slice(0, 10);
+}
+
 function Valuation() {
-    const [date, setDate] = useState('2026-11-05');
+    const [date, setDate] = useState(nextTradingDate);
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     const [log, setLog] = useState<ValuationRun[]>([]);

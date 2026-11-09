@@ -30,7 +30,10 @@ export default function Shell({ children, wide = false }: { children: ReactNode;
 
   useEffect(() => {
     const saved = localStorage.getItem('actorId');
-    if (saved && USERS.some((u) => u.id === saved)) setActor(saved);
+    if (saved && USERS.some((u) => u.id === saved)) {
+      const frame = requestAnimationFrame(() => setActor(saved));
+      return () => cancelAnimationFrame(frame);
+    }
   }, []);
 
   const refresh = useCallback(() => {
