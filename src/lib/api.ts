@@ -1,9 +1,9 @@
-// Mock mode (default) runs in the browser. When Angelo's routes are ready, set NEXT_PUBLIC_USE_MOCK=false.
+// The backend is the default. Set NEXT_PUBLIC_USE_MOCK=true to preview with browser-only data.
 import * as mock from './mock-data';
 import { usd } from './format';
 import type { Check, Dashboard, DecisionRequest, Instrument, NewOrder, Order, OrderStatus, Preview, Side, ValuationRun } from './types';
 
-const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== 'false';
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
 export class ApiError extends Error {
   status: number; code: string; checks?: Check[];

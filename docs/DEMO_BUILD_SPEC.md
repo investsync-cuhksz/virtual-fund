@@ -44,9 +44,10 @@ Kellen can finish the layout with the sample JSON below while the routes are bei
 | `GET /api/orders` | Orders | List orders and their statuses |
 | `POST /api/orders/{id}/decision` | Orders | Approve, reject, or cancel a pending order |
 | `POST /api/valuation` | Demo control | Fill eligible approved orders and save a daily snapshot |
+| `GET /api/valuation` | Valuation | List saved valuation runs |
 | `GET /api/dashboard` | Dashboard | Latest NAV, cash, performance, holdings, sectors, chart, and trade history |
 
-No separate backend server is needed. The route files go under `src/app/api/`. For the first demo, the valuation button can be small; the full Valuation, Ledger, and Settings pages are outside Kellen's three-screen scope.
+No separate backend server is needed. The route files go under `src/app/api/`. The local demo uses synthetic date-specific closing prices and benchmark levels from `src/lib/market-data.ts`, plus SQLite; `NEXT_PUBLIC_USE_MOCK=true` switches back to browser-only sample data. A valuation date without a fixture returns `PRICE_UNAVAILABLE` and saves nothing.
 
 ## Shared data shapes and examples
 

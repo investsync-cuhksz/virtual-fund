@@ -35,7 +35,7 @@ A committee member enters an order, another approves it, it fills automatically 
 
 ## Getting started
 
-This repository currently contains the Next.js starter. The fund workflow and API routes are still being built.
+This is one Next.js app with pages and API routes. The local demo uses a fixed list of US stocks, synthetic daily closing prices and S&P 500 levels, and a SQLite database; market data automation and login are future work.
 
 Use Node.js 20.9 or newer and npm:
 
@@ -45,6 +45,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Run `npm run lint` and `npm run build` before opening a pull request.
+
+Orders, fills, and valuation snapshots are saved in `data/virtual-fund.sqlite` (ignored by Git). Delete that file to reset local demo data. Set `NEXT_PUBLIC_USE_MOCK=true` in a local `.env` file to use the browser-only mock data instead. After building, run `npm run test:api` for the API workflow test.
 
 The app uses Next.js pages in `src/app/`. API route handlers will live in `src/app/api/`, with fund calculations and data access under `src/lib/`.
 

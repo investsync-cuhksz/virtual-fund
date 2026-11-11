@@ -6,6 +6,7 @@ import { card, field, primary, td, th } from '@/components/ui';
 import { listValuationRuns, runValuation } from '@/lib/api';
 import { shortDate, usd } from '@/lib/format';
 import type { ValuationRun } from '@/lib/types';
+import { marketDates, nextMarketDate } from '@/lib/market-data';
 
 const STEPS = [
     'Use the cached closing prices for the date you pick',
@@ -18,8 +19,13 @@ const STEPS = [
 const key = (x: ValuationRun) => JSON.stringify([x.date, x.status, x.filledOrderIds, x.navCents, x.cashCents]);
 const withFills = (rs: ValuationRun[]) => rs.filter((r) => r.filledOrderIds.length > 0);
 
+function nextTradingDate() {
+    const todayInNewYork = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    return nextMarketDate(todayInNewYork) ?? '';
+}
+
 function Valuation() {
-    const [date, setDate] = useState('2026-11-05');
+    const [date, setDate] = useState(nextTradingDate);
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     const [log, setLog] = useState<ValuationRun[]>([]);
@@ -70,6 +76,7 @@ function Valuation() {
                             {busy ? 'Running…' : 'Run valuation now'}
                         </button>
                     </div>
+                    <p className="mt-2 text-xs text-slate-600">Synthetic demo closes: {marketDates[0]} to {marketDates.at(-1)}. Choose a listed trading date.</p>
 
                     <div role="status" className="mt-5 text-sm">
                         {err && <p className="font-semibold text-red-800">{err}</p>}
