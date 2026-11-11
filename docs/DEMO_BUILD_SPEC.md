@@ -47,7 +47,7 @@ Kellen can finish the layout with the sample JSON below while the routes are bei
 | `GET /api/valuation` | Valuation | List saved valuation runs |
 | `GET /api/dashboard` | Dashboard | Latest NAV, cash, performance, holdings, sectors, chart, and trade history |
 
-No separate backend server is needed. The route files go under `src/app/api/`. The local demo uses fixed closing prices and SQLite; `NEXT_PUBLIC_USE_MOCK=true` switches back to browser-only sample data.
+No separate backend server is needed. The route files go under `src/app/api/`. The local demo uses synthetic date-specific closing prices and benchmark levels from `src/lib/market-data.ts`, plus SQLite; `NEXT_PUBLIC_USE_MOCK=true` switches back to browser-only sample data. A valuation date without a fixture returns `PRICE_UNAVAILABLE` and saves nothing.
 
 ## Shared data shapes and examples
 

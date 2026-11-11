@@ -18,7 +18,7 @@ async function freePort() {
 async function start(dbPath) {
   const port = await freePort();
   const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-p', String(port)], {
-    cwd: process.cwd(), env: { ...process.env, FUND_DB_PATH: dbPath }, stdio: 'ignore', windowsHide: true,
+    cwd: process.cwd(), env: { ...process.env, FUND_DB_PATH: dbPath, FUND_DEMO_NOW: '2026-11-11T16:00:00Z' }, stdio: 'ignore', windowsHide: true,
   });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) {
@@ -36,10 +36,7 @@ async function request(base, route, body) {
 }
 
 function nextWeekday() {
-  const ny = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  let date = new Date(`${ny}T00:00:00Z`);
-  do { date = new Date(date.getTime() + 86_400_000); } while ([0, 6].includes(date.getUTCDay()));
-  return date.toISOString().slice(0, 10);
+  return '2026-11-12';
 }
 
 async function withFreshServer(run) {
@@ -128,19 +125,21 @@ test('two approved orders fill once on a later weekday with whole shares and fee
   assert.equal((await request(base, `/api/orders/${jnj}/decision`, { actorId: 'angelo', action: 'APPROVE', reason: 7 })).status, 200);
   assert.equal((await request(base, `/api/orders/${xom}/decision`, { actorId: 'kellen', action: 'APPROVE' })).status, 200);
   const saturday = '2026-11-07';
-  assert.equal((await request(base, '/api/valuation', { date: saturday })).status, 400);
+  assert.equal((await request(base, '/api/valuation', { date: saturday })).data.error.code, 'PRICE_UNAVAILABLE');
   assert.equal((await request(base, '/api/valuation', { date: '2026-02-30' })).status, 400);
   const tooEarly = await request(base, '/api/valuation', { date: '2026-11-04' });
   assert.deepEqual(tooEarly.data.run.filledOrderIds, []);
   const date = nextWeekday();
   const run = await request(base, '/api/valuation', { date });
   assert.deepEqual(run.data.run.filledOrderIds, [xom, jnj]);
-  assert.equal(run.data.run.cashCents, 88_995_006);
+  assert.equal(run.data.run.cashCents, 88_994_406);
   assert.equal(run.data.run.navCents, 99_989_006);
   const dashboard = (await request(base, '/api/dashboard')).data;
   assert.equal(dashboard.recentTrades.length, 2);
-  assert.equal(dashboard.recentTrades.find((t) => t.ticker === 'XOM').quantity, 454);
-  assert.equal(dashboard.recentTrades.find((t) => t.ticker === 'XOM').feeCents, 4_994);
+  assert.equal(dashboard.recentTrades.find((t) => t.ticker === 'XOM').quantity, 446);
+  assert.equal(dashboard.recentTrades.find((t) => t.ticker === 'XOM').priceCents, 11_200);
+  assert.equal(dashboard.recentTrades.find((t) => t.ticker === 'XOM').feeCents, 4_995);
+  assert.equal(dashboard.performance.benchmarkSinceStartPercent, 0.55);
   assert.equal(dashboard.sectorBreakdown.reduce((sum, s) => sum + s.weightPercent, 0).toFixed(6), '100.000000');
   assert.equal((await request(base, '/api/valuation', { date: '2026-11-05' })).status, 409);
   assert.deepEqual((await request(base, '/api/valuation', { date })).data.run, run.data.run);
@@ -176,23 +175,32 @@ test('order approval, fill, saved dashboard, and idempotent valuation', async ()
     assert.equal(approved.data.order.status, 'APPROVED');
     const date = nextWeekday();
     const run = await request(base, '/api/valuation', { date });
-    assert.equal(run.data.run.navCents, 99_994_000);
-    assert.equal(run.data.run.cashCents, 93_994_000);
+    assert.equal(run.data.run.navCents, 99_994_001);
+    assert.equal(run.data.run.cashCents, 93_994_601);
     assert.deepEqual(run.data.run.filledOrderIds, [id]);
     const again = await request(base, '/api/valuation', { date });
     assert.deepEqual(again.data.run, run.data.run);
     assert.equal((await request(base, '/api/valuation')).data.runs.length, 1);
     const dashboard = await request(base, '/api/dashboard');
-    assert.equal(dashboard.data.fund.navCents, 99_994_000);
-    assert.equal(dashboard.data.holdings[0].quantity, 300);
-    assert.equal(dashboard.data.recentTrades[0].feeCents, 6_000);
-    assert.equal(dashboard.data.performance.fundSinceStartPercent, -0.006);
+    assert.equal(dashboard.data.fund.navCents, 99_994_001);
+    assert.equal(dashboard.data.holdings[0].quantity, 297);
+    assert.equal(dashboard.data.holdings[0].lastPriceCents, 20_200);
+    assert.equal(dashboard.data.recentTrades[0].feeCents, 5_999);
+    assert.equal(dashboard.data.performance.fundSinceStartPercent, -0.005999);
+    assert.equal(dashboard.data.performance.benchmarkSinceStartPercent, 0.55);
+    const nextRun = await request(base, '/api/valuation', { date: '2026-11-13' });
+    assert.equal(nextRun.data.run.filledOrderIds.length, 0);
+    const later = await request(base, '/api/dashboard');
+    assert.equal(later.data.fund.navCents, 99_964_301);
+    assert.equal(later.data.holdings[0].lastPriceCents, 20_100);
+    assert.equal(later.data.performance.benchmarkSinceStartPercent, 0.4);
+    assert.deepEqual(later.data.chart.map((point) => point.benchmarkIndex), [100, 100.55, 100.4]);
     server.child.kill();
     server = undefined;
     const restarted = await start(dbPath);
     server = restarted;
     assert.equal((await request(restarted.base, '/api/orders')).data.orders[0].status, 'FILLED');
-    assert.equal((await request(restarted.base, '/api/dashboard')).data.fund.navCents, 99_994_000);
+    assert.equal((await request(restarted.base, '/api/dashboard')).data.fund.navCents, 99_964_301);
   } finally {
     server?.child.kill();
     if (path.dirname(directory) === tmpdir() && path.basename(directory).startsWith('investsync-api-')) {

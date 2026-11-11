@@ -35,7 +35,7 @@ A committee member enters an order, another approves it, it fills automatically 
 
 ## Getting started
 
-This is one Next.js app with pages and API routes. The local demo uses a fixed list of US stocks, fixed closing prices, and a SQLite database; market data automation and login are future work.
+This is one Next.js app with pages and API routes. The local demo uses a fixed list of US stocks, synthetic daily closing prices and S&P 500 levels, and a SQLite database; market data automation and login are future work.
 
 Use Node.js 20.9 or newer and npm:
 

@@ -6,6 +6,7 @@ import { card, field, primary, td, th } from '@/components/ui';
 import { listValuationRuns, runValuation } from '@/lib/api';
 import { shortDate, usd } from '@/lib/format';
 import type { ValuationRun } from '@/lib/types';
+import { marketDates, nextMarketDate } from '@/lib/market-data';
 
 const STEPS = [
     'Use the cached closing prices for the date you pick',
@@ -20,9 +21,7 @@ const withFills = (rs: ValuationRun[]) => rs.filter((r) => r.filledOrderIds.leng
 
 function nextTradingDate() {
     const todayInNewYork = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    let date = new Date(`${todayInNewYork}T00:00:00Z`);
-    do { date = new Date(date.getTime() + 86_400_000); } while ([0, 6].includes(date.getUTCDay()));
-    return date.toISOString().slice(0, 10);
+    return nextMarketDate(todayInNewYork) ?? '';
 }
 
 function Valuation() {
@@ -77,6 +76,7 @@ function Valuation() {
                             {busy ? 'Running…' : 'Run valuation now'}
                         </button>
                     </div>
+                    <p className="mt-2 text-xs text-slate-600">Synthetic demo closes: {marketDates[0]} to {marketDates.at(-1)}. Choose a listed trading date.</p>
 
                     <div role="status" className="mt-5 text-sm">
                         {err && <p className="font-semibold text-red-800">{err}</p>}
