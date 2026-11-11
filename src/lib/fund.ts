@@ -117,11 +117,12 @@ export const decideOrder = db.transaction((id: string, body: DecisionRequest): O
   if (order.status !== 'PENDING') fail(409, 'INVALID_STATUS', 'This order is no longer pending.');
   if (!['APPROVE', 'REJECT', 'CANCEL'].includes(body.action)) fail(400, 'INVALID_ACTION', 'Choose a valid action.');
   const action = body.action as DecisionAction;
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (action === 'CANCEL' && actor.id !== order.submittedBy.id) fail(403, 'NOT_SUBMITTER', 'Only the submitter can cancel this order.');
   if (action !== 'CANCEL' && actor.id === order.submittedBy.id) fail(403, 'SELF_APPROVAL', 'You cannot approve your own order.');
-  if (action !== 'APPROVE' && (typeof body.reason !== 'string' || !body.reason.trim())) fail(400, 'REASON_REQUIRED', 'Enter a reason.');
+  if (action !== 'APPROVE' && !reason) fail(400, 'REASON_REQUIRED', 'Enter a reason.');
   order.status = { APPROVE: 'APPROVED', REJECT: 'REJECTED', CANCEL: 'CANCELLED' }[action] as Order['status'];
-  order.decision = { action, by: actor, at: new Date().toISOString(), reason: body.reason?.trim() || null };
+  order.decision = { action, by: actor, at: new Date().toISOString(), reason: reason || null };
   db.prepare('UPDATE orders SET payload = ? WHERE id = ?').run(JSON.stringify(order), Number(id.slice(4)));
   return order;
 });
