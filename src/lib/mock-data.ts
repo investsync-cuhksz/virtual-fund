@@ -13,8 +13,11 @@ const person = (id: string) => ({ id, name: id[0].toUpperCase() + id.slice(1) })
 const inst = (t: string) => instruments.find((i) => i.ticker === t)!;
 
 export const orders: Order[] = [
-  { id: 'ord_002', createdAt: '2026-11-04T19:20:00Z', instrument: inst('XOM'), side: 'BUY', sizePercent: 5, requestedAmountCents: 5000000, pitch: 'Exxon energy cash flow', rationale: 'High free cash flow and a well-covered dividend.', submittedBy: person('angelo'), status: 'PENDING', decision: null, fill: null },
-  { id: 'ord_001', createdAt: '2026-11-04T19:00:00Z', instrument: inst('JNJ'), side: 'BUY', sizePercent: 6, requestedAmountCents: 6000000, pitch: 'J&J pharma pipeline', rationale: 'Defensive earnings and a steady dividend.', submittedBy: person('kellen'), status: 'PENDING', decision: null, fill: null },
+  { id: 'ord_004', createdAt: '2026-11-04T19:20:00Z', instrument: inst('XOM'), side: 'BUY', sizePercent: 5, requestedAmountCents: 5000000, pitch: 'Exxon energy cash flow', rationale: 'High free cash flow and a well-covered dividend.', submittedBy: person('angelo'), status: 'PENDING', decision: null, fill: null },
+  { id: 'ord_003', createdAt: '2026-11-04T19:00:00Z', instrument: inst('JNJ'), side: 'BUY', sizePercent: 6, requestedAmountCents: 6000000, pitch: 'J&J pharma pipeline', rationale: 'Defensive earnings and a steady dividend.', submittedBy: person('kellen'), status: 'PENDING', decision: null, fill: null },
+  // To test sell orders
+  { id: 'ord_002', createdAt: '2026-11-03T15:00:00Z', instrument: inst('JPM'), side: 'BUY', sizePercent: 5, requestedAmountCents: 5000000, pitch: 'JPMorgan rate outlook', rationale: 'Higher rates support lending margins.', submittedBy: person('angelo'), status: 'FILLED', decision: { action: 'APPROVE', by: person('kellen'), at: '2026-11-03T16:00:00Z', reason: null }, fill: { date: '2026-11-05', at: '2026-11-05T21:05:00Z' } },
+  { id: 'ord_001', createdAt: '2026-11-03T14:00:00Z', instrument: inst('AAPL'), side: 'BUY', sizePercent: 8, requestedAmountCents: 8000000, pitch: 'Apple services pitch', rationale: 'Growing services revenue and strong cash flow.', submittedBy: person('kellen'), status: 'FILLED', decision: { action: 'APPROVE', by: person('angelo'), at: '2026-11-03T15:00:00Z', reason: null }, fill: { date: '2026-11-05', at: '2026-11-05T21:00:00Z' } },
 ];
 
 export const dashboardStart: Dashboard = {

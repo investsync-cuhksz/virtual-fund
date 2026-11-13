@@ -10,7 +10,7 @@ export interface Preview { allowed: boolean; estimatedAmountCents: number; check
 export interface Person { id: string; name: string }
 export interface Decision { action: DecisionAction; by: Person; at: string; reason: string | null }
 // The spec does not define the fill object yet. These optional fields are an assumption.
-export interface Fill { date?: string; quantity?: number; priceCents?: number; feeCents?: number }
+export interface Fill { date?: string; at?: string; quantity?: number; priceCents?: number; feeCents?: number }
 export interface Order {
   id: string; createdAt: string; instrument: Instrument; side: Side; sizePercent: number;
   requestedAmountCents: number; pitch: string; rationale: string; submittedBy: Person;
@@ -18,7 +18,7 @@ export interface Order {
 }
 export interface NewOrder { actorId: string; ticker: string; side: Side; sizePercent: number; pitch: string; rationale: string }
 export interface DecisionRequest { actorId: string; action: DecisionAction; reason?: string }
-export interface ValuationRun { date: string; status: string; filledOrderIds: string[]; navCents: number; cashCents: number }
+export interface ValuationRun { date: string; status: string; filledOrderIds: string[]; navCents: number; cashCents: number; at?: string }
 export interface Dashboard {
   asOf: string;
   fund: { baseCurrency: string; navCents: number; cashCents: number; freeCashCents: number };
@@ -26,5 +26,5 @@ export interface Dashboard {
   chart: { date: string; fundIndex: number; benchmarkIndex: number }[];
   holdings: { ticker: string; name: string; quantity: number; lastPriceCents: number; valueCents: number; weightPercent: number; returnPercent: number }[];
   sectorBreakdown: { sector: string; weightPercent: number }[];
-  recentTrades: { id: string; date: string; type: string; ticker: string; side: Side; quantity: number; priceCents: number; feeCents: number; orderId: string; pitch: string }[];
+  recentTrades: { id: string; date: string; type: string; ticker: string; side: Side; quantity: number; priceCents: number; feeCents: number; orderId: string; pitch: string; executedAt?: string | null }[];
 }

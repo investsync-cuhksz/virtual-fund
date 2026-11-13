@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Shell from '@/components/Shell';
 import { card, field, primary, td, th } from '@/components/ui';
 import { listValuationRuns, runValuation } from '@/lib/api';
-import { shortDate, usd } from '@/lib/format';
+import { shortDate, stamp, usd } from '@/lib/format';
 import type { ValuationRun } from '@/lib/types';
 import { marketDates, nextMarketDate } from '@/lib/market-data';
 
@@ -121,7 +121,7 @@ function Valuation() {
                         <tbody>
                             {log.map((r, i) => (
                                 <tr key={i}>
-                                    <td className={td}>{shortDate(r.date)}</td>
+                                    <td className={`${td} whitespace-nowrap`}>{r.at ? stamp(r.at) : shortDate(r.date)}</td>
                                     <td className={`${td} font-semibold ${r.status === 'SUCCESS' ? 'text-green-700' : 'text-red-700'}`}>{r.status === 'SUCCESS' ? 'Success' : r.status}</td>
                                     <td className={`${td} text-right`}>{r.filledOrderIds.length}</td>
                                     <td className={`${td} text-right`}>{usd(r.navCents)}</td>

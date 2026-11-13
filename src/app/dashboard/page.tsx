@@ -4,7 +4,7 @@ import NavChart from '@/components/NavChart';
 import Shell from '@/components/Shell';
 import { card, td, th } from '@/components/ui';
 import { getDashboard } from '@/lib/api';
-import { pct, pp, shortDate, tone, usd } from '@/lib/format';
+import { pct, pp, shortDate, stamp, tone, usd } from '@/lib/format';
 import type { Dashboard } from '@/lib/types';
 
 function View() {
@@ -105,12 +105,12 @@ function View() {
           <p className="text-sm text-slate-600">No trades yet.</p>
         ) : (
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead><tr><th className={th}>Date</th><th className={th}>Type</th><th className={th}>Instrument</th><th className={`${th} text-right`}>Qty</th><th className={`${th} text-right`}>Price</th><th className={`${th} text-right`}>Fee</th><th className={th}>Order</th><th className={th}>Pitch</th></tr></thead>
+            <thead><tr><th className={th}>Date</th><th className={th}>Type</th><th className={th}>Instrument</th><th className={th}>Qty</th><th className={th}>Price</th><th className={th}>Fee</th><th className={th}>Order</th><th className={th}>Pitch</th></tr></thead>
             <tbody>
               {d.recentTrades.map((t) => (
                 <tr key={t.id}>
-                  <td className={td}>{shortDate(t.date)}</td><td className={td}>{t.side === 'BUY' ? 'Buy' : 'Sell'} fill</td><td className={`${td} font-semibold`}>{t.ticker}</td>
-                  <td className={`${td} text-right`}>{t.quantity}</td><td className={`${td} text-right`}>{usd(t.priceCents)}</td><td className={`${td} text-right`}>{usd(t.feeCents)}</td>
+                  <td className={`${td} whitespace-nowrap`}>{t.executedAt ? stamp(t.executedAt) : shortDate(t.date)}</td><td className={td}>{t.side === 'BUY' ? 'Buy' : 'Sell'} fill</td><td className={`${td} font-semibold`}>{t.ticker}</td>
+                  <td className={td}>{t.quantity}</td><td className={td}>{usd(t.priceCents)}</td><td className={td}>{usd(t.feeCents)}</td>
                   <td className={td}>{t.orderId.replace('ord_', '#')}</td><td className={td}>{t.pitch}</td>
                 </tr>
               ))}

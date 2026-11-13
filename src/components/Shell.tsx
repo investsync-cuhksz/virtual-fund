@@ -18,7 +18,7 @@ const TABS = [
   { href: '/enter-order', label: 'Enter order', built: true },
   { href: '/orders', label: 'Orders', built: true },
   { href: '/dashboard', label: 'Dashboard', built: true },
-  { href: '/ledger', label: 'Ledger', built: false },
+  { href: '/ledger', label: 'Ledger', built: true },
   { href: '/valuation', label: 'Valuation', built: true },
   { href: '/settings', label: 'Settings', built: false },
 ];

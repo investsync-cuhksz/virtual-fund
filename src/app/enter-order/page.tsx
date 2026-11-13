@@ -4,27 +4,31 @@ import { useEffect, useState } from 'react';
 import Shell, { useActor } from '@/components/Shell';
 import { card, field, outline, primary } from '@/components/ui';
 import { ApiError, createOrder, getDashboard, previewOrder, searchInstruments } from '@/lib/api';
-import { usd } from '@/lib/format';
-import type { Dashboard, Instrument, Preview } from '@/lib/types';
+import { pct, usd } from '@/lib/format';
+import type { Dashboard, Instrument, Preview, Side } from '@/lib/types';
 
 function OrderForm() {
   const actorId = useActor();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Instrument[]>([]);
   const [sel, setSel] = useState<Instrument | null>(null);
+  const [side, setSide] = useState<Side>('BUY');
   const [size, setSize] = useState('6');
   const [pitch, setPitch] = useState('');
   const [why, setWhy] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [fund, setFund] = useState<Dashboard['fund'] | null>(null);
+  const [dash, setDash] = useState<Dashboard | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const isSell = side === 'SELL';
+  const fund = dash?.fund;
   const n = Number(size);
   const sizeOk = /^\d+(\.\d{1,2})?$/.test(size.trim()) && n > 0;
   const failed = preview?.checks.find((c) => c.status === 'FAIL');
+  const holding = sel ? dash?.holdings.find((h) => h.ticker === sel.ticker) : undefined;
 
-  useEffect(() => { getDashboard().then((d) => setFund(d.fund)).catch(() => { }); }, [msg]);
+  useEffect(() => { getDashboard().then(setDash).catch(() => { }); }, [msg]);
 
   useEffect(() => {
     const t = setTimeout(() => { searchInstruments(q).then(setResults).catch(() => setResults([])); }, 200);
@@ -35,21 +39,27 @@ function OrderForm() {
     if (!sel || !sizeOk) return;
     let live = true;
     const t = setTimeout(() => {
-      previewOrder({ ticker: sel.ticker, side: 'BUY', sizePercent: n })
+      previewOrder({ ticker: sel.ticker, side, sizePercent: n })
         .then((p) => { if (live) setPreview(p); })
-        .catch((e) => { if (live) setMsg({ ok: false, text: e.message }); });
+        .catch((e) => {
+          if (!live) return;
+          setPreview(null);
+          setMsg({ ok: false, text: e instanceof ApiError && e.code === 'UNSUPPORTED_SIDE' ? 'Sell orders are not available yet.' : e.message });
+        });
     }, 300);
     return () => { live = false; clearTimeout(t); };
-  }, [sel, size, sizeOk, n]);
+  }, [sel, side, size, sizeOk, n]);
 
-  function clear() { setSel(null); setPreview(null); setQ(''); setSize('6'); setPitch(''); setWhy(''); setMsg(null); }
+  function changeSide(s: Side) { setSide(s); setPreview(null); setMsg(null); }
+
+  function clear() { setSel(null); setPreview(null); setQ(''); setSide('BUY'); setSize('6'); setPitch(''); setWhy(''); setMsg(null); }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!sel || !preview?.allowed) return;
     setBusy(true); setMsg(null);
     try {
-      const { order } = await createOrder({ actorId, ticker: sel.ticker, side: 'BUY', sizePercent: n, pitch: pitch.trim(), rationale: why.trim() });
+      const { order } = await createOrder({ actorId, ticker: sel.ticker, side, sizePercent: n, pitch: pitch.trim(), rationale: why.trim() });
       clear();
       setMsg({ ok: true, text: `Order ${order.id} saved as Pending. A second committee member must approve it.` });
     } catch (err) {
@@ -96,17 +106,22 @@ function OrderForm() {
           <div className="grid gap-5 sm:grid-cols-2">
             <div>
               <span className="text-sm font-semibold">Side</span>
-              <div className="mt-1 flex gap-2">
-                <button type="button" aria-pressed="true" className={primary}>Buy</button>
-                <button type="button" disabled title="Selling is not available in the first demo" className={outline}>Sell</button>
+              <div className="mt-1 flex gap-2" role="group" aria-label="Side">
+                <button type="button" aria-pressed={!isSell} onClick={() => changeSide('BUY')} className={!isSell ? primary : outline}>Buy</button>
+                <button type="button" aria-pressed={isSell} onClick={() => changeSide('SELL')} className={isSell ? primary : outline}>Sell</button>
               </div>
             </div>
             <div>
-              <label htmlFor="size" className="text-sm font-semibold">Size (% of NAV)</label>
+              <label htmlFor="size" className="text-sm font-semibold">{isSell ? 'Amount to sell (% of NAV)' : 'Size (% of NAV)'}</label>
               <input id="size" inputMode="decimal" value={size} onChange={(e) => { setSize(e.target.value); setPreview(null); }} placeholder="e.g. 6" aria-invalid={!sizeOk} className={field} />
               <p className="mt-1 text-xs text-slate-600">
-                {!sizeOk ? 'Enter a size above 0, with up to 2 decimals.' : preview ? `About ${usd(preview.estimatedAmountCents)}` : 'Pick an instrument to see the amount.'}
+                {!sizeOk ? 'Enter a size above 0, with up to 2 decimals.' : preview ? `About ${usd(preview.estimatedAmountCents)}${isSell ? ' to sell' : ''}` : 'Pick an instrument to see the amount.'}
               </p>
+              {isSell && sel && (
+                <p className="mt-1 text-xs font-semibold text-slate-700">
+                  {holding ? `The fund holds ${holding.quantity} shares (${usd(holding.valueCents)}, ${pct(holding.weightPercent)} of NAV).` : 'The fund holds no shares of this stock.'}
+                </p>
+              )}
             </div>
           </div>
 
@@ -128,7 +143,7 @@ function OrderForm() {
 
           <div className="flex justify-end gap-3">
             <button type="button" onClick={clear} className={outline}>Clear</button>
-            <button type="submit" disabled={busy || !preview?.allowed || !pitch.trim() || !why.trim()} className={primary}>{busy ? 'Saving…' : 'Submit order'}</button>
+            <button type="submit" disabled={busy || !preview?.allowed || !pitch.trim() || !why.trim()} className={primary}>{busy ? 'Saving…' : isSell ? 'Submit sell order' : 'Submit buy order'}</button>
           </div>
         </form>
 
