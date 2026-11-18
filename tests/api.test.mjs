@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 async function freePort() {
   const server = createServer();
@@ -62,7 +63,7 @@ test('invalid submissions fail without creating orders', async () => withFreshSe
   const cases = [
     [order('FAKE', 5), 404, 'UNKNOWN_INSTRUMENT'],
     [{ ...order('JNJ', 5), actorId: 'unknown' }, 400, 'INVALID_ACTOR'],
-    [{ ...order('JNJ', 5), side: 'SELL' }, 400, 'UNSUPPORTED_SIDE'],
+    [{ ...order('JNJ', 5), side: 'HOLD' }, 400, 'UNSUPPORTED_SIDE'],
     [order('JNJ', 0), 400, 'INVALID_SIZE'],
     [order('JNJ', 0.001), 400, 'INVALID_SIZE'],
     [{ ...order('JNJ', 5), pitch: 12 }, 400, 'REQUIRED_TEXT'],
@@ -201,6 +202,125 @@ test('order approval, fill, saved dashboard, and idempotent valuation', async ()
     server = restarted;
     assert.equal((await request(restarted.base, '/api/orders')).data.orders[0].status, 'FILLED');
     assert.equal((await request(restarted.base, '/api/dashboard')).data.fund.navCents, 99_964_301);
+  } finally {
+    server?.child.kill();
+    if (path.dirname(directory) === tmpdir() && path.basename(directory).startsWith('investsync-api-')) {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try { await rm(directory, { recursive: true, force: true }); break; }
+        catch (error) { if (attempt === 9) throw error; await delay(200); }
+      }
+    }
+  }
+});
+
+test('sell orders reserve held shares, fill at the next close, and keep ledger rows', async () => withFreshServer(async (base) => {
+  const buy = (await request(base, '/api/orders', order('JNJ', 6))).data.order;
+  await request(base, `/api/orders/${buy.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const empty = await request(base, '/api/orders/preview', { ticker: 'AAPL', side: 'SELL', sizePercent: 2 });
+  assert.equal(empty.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+
+  const preview = await request(base, '/api/orders/preview', { ticker: 'JNJ', side: 'SELL', sizePercent: 3 });
+  assert.equal(preview.data.allowed, true);
+  assert.match(preview.data.checks.find((c) => c.code === 'SHARES_HELD').label, /148 .*297 held/);
+  const sale = await request(base, '/api/orders', { ...order('JNJ', 3), side: 'SELL' });
+  assert.equal(sale.status, 201);
+  assert.equal(sale.data.order.requestedQuantity, 148);
+  assert.equal((await request(base, `/api/orders/${sale.data.order.id}/decision`, { actorId: 'kellen', action: 'APPROVE' })).status, 403);
+  const oversell = await request(base, '/api/orders', { ...order('JNJ', 4, 'angelo'), side: 'SELL' });
+  assert.equal(oversell.status, 422);
+  assert.equal(oversell.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+  assert.equal((await request(base, `/api/orders/${sale.data.order.id}/decision`, { actorId: 'angelo', action: 'APPROVE' })).status, 200);
+
+  const filled = await request(base, '/api/valuation', { date: '2026-11-13' });
+  assert.deepEqual(filled.data.run.filledOrderIds, [sale.data.order.id]);
+  assert.equal(filled.data.run.cashCents, 96_966_426);
+  assert.equal(filled.data.run.navCents, 99_961_326);
+  const dashboard = (await request(base, '/api/dashboard')).data;
+  assert.equal(dashboard.holdings[0].quantity, 149);
+  assert.equal(dashboard.recentTrades.length, 2);
+  assert.deepEqual(dashboard.recentTrades.map((t) => t.side), ['SELL', 'BUY']);
+  assert.equal(dashboard.recentTrades[0].quantity, 148);
+  assert.equal(dashboard.recentTrades[0].priceCents, 20_100);
+  assert.equal(dashboard.recentTrades[0].feeCents, 2_975);
+  assert.equal(dashboard.recentTrades[0].executedAt, '2026-11-13T21:00:00.000Z');
+  assert.deepEqual((await request(base, '/api/valuation', { date: '2026-11-13' })).data.run, filled.data.run);
+  assert.equal((await request(base, '/api/dashboard')).data.recentTrades.length, 2);
+
+  const lastSale = await request(base, '/api/orders', { ...order('JNJ', 3), side: 'SELL' });
+  assert.equal(lastSale.data.order.requestedQuantity, 149);
+  await request(base, `/api/orders/${lastSale.data.order.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  const finalRun = await request(base, '/api/valuation', { date: '2026-11-16' });
+  assert.equal(finalRun.data.run.cashCents, 99_988_101);
+  assert.equal(finalRun.data.run.navCents, 99_988_101);
+  const after = (await request(base, '/api/dashboard')).data;
+  assert.deepEqual(after.holdings, []);
+  assert.equal(after.recentTrades.length, 3);
+  assert.equal(after.sectorBreakdown.find((s) => s.sector === 'Cash').weightPercent, 100);
+}));
+
+test('cancelled sells release reservations and concurrent sells cannot oversubscribe shares', async () => withFreshServer(async (base) => {
+  const buy = (await request(base, '/api/orders', order('AAPL', 8))).data.order;
+  await request(base, `/api/orders/${buy.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const saleBody = { ...order('AAPL', 5), side: 'SELL' };
+  const [first, second] = await Promise.all([request(base, '/api/orders', saleBody), request(base, '/api/orders', { ...saleBody, actorId: 'angelo' })]);
+  assert.deepEqual([first.status, second.status].sort(), [201, 422]);
+  const saved = first.status === 201 ? first : second;
+  const rejected = first.status === 422 ? first : second;
+  assert.equal(rejected.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+  await request(base, `/api/orders/${saved.data.order.id}/decision`, { actorId: saved.data.order.submittedBy.id, action: 'CANCEL', reason: 'Changed mind' });
+  const retry = await request(base, '/api/orders', saleBody);
+  assert.equal(retry.status, 201);
+}));
+
+test('order history preserves submission, approval, and fill without duplicate events', async () => withFreshServer(async (base) => {
+  assert.equal((await request(base, '/api/orders/ord_999/events')).status, 404);
+  const created = (await request(base, '/api/orders', order('JNJ', 6))).data.order;
+  const url = `/api/orders/${created.id}/events`;
+  const first = (await request(base, url)).data.events;
+  assert.deepEqual(first.map((event) => event.type), ['SUBMITTED']);
+  assert.equal(first[0].by.id, 'kellen');
+  assert.equal(first[0].details.requestedAmountCents, 6_000_000);
+  await request(base, `/api/orders/${created.id}/decision`, { actorId: 'kellen', action: 'APPROVE' });
+  assert.equal((await request(base, url)).data.events.length, 1);
+  await request(base, `/api/orders/${created.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  const approved = (await request(base, url)).data.events;
+  assert.deepEqual(approved.map((event) => event.type), ['SUBMITTED', 'APPROVED']);
+  assert.equal(approved[1].by.id, 'angelo');
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const filled = (await request(base, url)).data.events;
+  assert.deepEqual(filled.map((event) => event.type), ['SUBMITTED', 'APPROVED', 'FILLED']);
+  assert.equal(filled[2].details.quantity, 297);
+  assert.equal(filled[2].details.feeCents, 5_999);
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  assert.deepEqual((await request(base, url)).data.events, filled);
+  const rejected = (await request(base, '/api/orders', order('XOM', 5))).data.order;
+  await request(base, `/api/orders/${rejected.id}/decision`, { actorId: 'angelo', action: 'REJECT', reason: 'Pitch withdrawn' });
+  const rejectedEvents = (await request(base, `/api/orders/${rejected.id}/events`)).data.events;
+  assert.deepEqual(rejectedEvents.map((event) => event.type), ['SUBMITTED', 'REJECTED']);
+  assert.equal(rejectedEvents[1].details.reason, 'Pitch withdrawn');
+}));
+
+test('older local orders receive clearly marked reconstructed history', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'investsync-api-'));
+  const dbPath = path.join(directory, 'fund.sqlite');
+  let server;
+  try {
+    const database = new Database(dbPath);
+    database.exec('CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL)');
+    database.prepare('INSERT INTO orders (payload) VALUES (?)').run(JSON.stringify({
+      id: 'ord_001', createdAt: '2026-11-10T14:00:00Z', instrument: { ticker: 'JNJ' }, side: 'BUY', sizePercent: 6,
+      requestedAmountCents: 6_000_000, pitch: 'Older pitch', rationale: 'Older rationale', submittedBy: { id: 'kellen', name: 'Kellen' },
+      status: 'FILLED', decision: { action: 'APPROVE', by: { id: 'angelo', name: 'Angelo' }, at: '2026-11-10T15:00:00Z', reason: null },
+      fill: { date: '2026-11-12', quantity: 297, priceCents: 20_200, feeCents: 5_999 },
+    }));
+    database.close();
+    server = await start(dbPath);
+    const events = (await request(server.base, '/api/orders/ord_001/events')).data.events;
+    assert.deepEqual(events.map((event) => event.type), ['SUBMITTED', 'APPROVED', 'FILLED']);
+    assert.ok(events.every((event) => event.details.backfilled === true));
+    assert.equal(events[2].details.priceCents, 20_200);
   } finally {
     server?.child.kill();
     if (path.dirname(directory) === tmpdir() && path.basename(directory).startsWith('investsync-api-')) {

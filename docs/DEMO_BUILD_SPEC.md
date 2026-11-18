@@ -27,11 +27,12 @@ Kellen can finish the layout with the sample JSON below while the routes are bei
 - USD only; fixed list of US stocks; whole shares (lot size 1); one S&P 500 benchmark.
 - Starting cash: USD 1,000,000. Position limit: 10% of NAV. Sector limit: 30% of NAV. Fee: 0.10% of fill value.
 - Two demo committee users: `kellen` and `angelo`. The user switcher supplies `actorId` in write requests. There is no login in the local demo; real authentication must replace this before public use.
-- The first demo supports buy orders. The Sell control can be disabled or hidden until sell calculations are ready.
+- Buy and sell orders use the same second-person approval. A sell can only use shares already held; pending and approved sells reserve their fixed share quantities, so short selling is blocked.
 - The dashboard demo shows since-start performance against the S&P 500. Extra periods and benchmarks in the design can be hidden for now.
 - An invalid order is not saved; the API returns the failed checks. A committee rejection is a saved order with status `REJECTED`.
 - An approved order fills at the next trading day's closing price when the demo valuation is run. A fill adds a ledger row; no ledger row is edited or deleted. Running valuation twice for the same date must not fill an order twice.
 - `requestedAmountCents` is fixed at submission from the latest NAV and `sizePercent`. `freeCashCents` is cash less pending and approved buy commitments; the cash check must allow for the fill fee too.
+- A sell also records `requestedQuantity`: whole shares calculated from the requested amount and latest saved close at submission. Its share quantity stays fixed if the closing price changes before its fill; proceeds use the fill-date close minus the 0.10% fee.
 - All API money fields are **integer US cents** (`6000000` means USD 60,000.00). Percent fields are numbers in percent units (`6` means 6%, not 0.06). Dates use `YYYY-MM-DD`; timestamps use ISO 8601 UTC.
 
 ## Routes
@@ -43,11 +44,14 @@ Kellen can finish the layout with the sample JSON below while the routes are bei
 | `POST /api/orders` | Enter order | Validate and create a pending order |
 | `GET /api/orders` | Orders | List orders and their statuses |
 | `POST /api/orders/{id}/decision` | Orders | Approve, reject, or cancel a pending order |
+| `GET /api/orders/{id}/events` | Contributors | Read the order's append-only submission, decision, and fill history |
 | `POST /api/valuation` | Demo control | Fill eligible approved orders and save a daily snapshot |
 | `GET /api/valuation` | Valuation | List saved valuation runs |
 | `GET /api/dashboard` | Dashboard | Latest NAV, cash, performance, holdings, sectors, chart, and trade history |
 
 No separate backend server is needed. The route files go under `src/app/api/`. The local demo uses synthetic date-specific closing prices and benchmark levels from `src/lib/market-data.ts`, plus SQLite; `NEXT_PUBLIC_USE_MOCK=true` switches back to browser-only sample data. A valuation date without a fixture returns `PRICE_UNAVAILABLE` and saves nothing.
+
+The read-only Ledger page uses the full `recentTrades` array from `GET /api/dashboard`. Each fill has a positive displayed `quantity`, a `BUY` or `SELL` side, and an `executedAt` timestamp for the simulated market close. `POST /api/valuation` also returns `at` for that close. Corrections, dividends, and splits are later work.
 
 ## Shared data shapes and examples
 
@@ -137,6 +141,8 @@ If submission fails a rule: HTTP 422 with `{ "error": { "code": "MANDATE_VIOLATI
 Response: HTTP 200 with `{ "order": /* updated order object */ }`. For rejection, use `action: "REJECT"` and a required `reason`. For cancellation, use `action: "CANCEL"` and a required `reason`; only the submitter can cancel a pending order. Approval and rejection require a different committee member from the submitter. The updated order has `decision: { "action": "APPROVE", "by": { "id": "angelo", "name": "Angelo" }, "at": "2026-11-04T19:30:00Z", "reason": null }`.
 
 Self-approval returns HTTP 403 with `{ "error": { "code": "SELF_APPROVAL", "message": "You cannot approve your own order." } }`. An order that is no longer pending returns HTTP 409 with `code: "INVALID_STATUS"`.
+
+`GET /api/orders/ord_001/events` returns `{ "events": [...] }` in recorded order. Each event has `id`, `orderId`, `type` (`SUBMITTED`, `APPROVED`, `REJECTED`, `CANCELLED`, or `FILLED`), an ISO UTC `at` timestamp, `by: { id, name }`, and `details`. Invalid submissions and failed decisions add no event; repeating a saved valuation adds no second fill event. Older local orders are reconstructed once from their saved order records and have `details.backfilled: true`.
 
 ### Valuation
 

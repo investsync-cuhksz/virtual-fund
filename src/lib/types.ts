@@ -9,11 +9,15 @@ export interface Check { code: string; label: string; status: CheckStatus }
 export interface Preview { allowed: boolean; estimatedAmountCents: number; checks: Check[] }
 export interface Person { id: string; name: string }
 export interface Decision { action: DecisionAction; by: Person; at: string; reason: string | null }
+export interface OrderEvent {
+  id: string; orderId: string; type: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'FILLED';
+  at: string; by: Person; details: Record<string, unknown>;
+}
 // The spec does not define the fill object yet. These optional fields are an assumption.
 export interface Fill { date?: string; at?: string; quantity?: number; priceCents?: number; feeCents?: number }
 export interface Order {
   id: string; createdAt: string; instrument: Instrument; side: Side; sizePercent: number;
-  requestedAmountCents: number; pitch: string; rationale: string; submittedBy: Person;
+  requestedAmountCents: number; requestedQuantity?: number; pitch: string; rationale: string; submittedBy: Person;
   status: OrderStatus; decision: Decision | null; fill: Fill | null;
 }
 export interface NewOrder { actorId: string; ticker: string; side: Side; sizePercent: number; pitch: string; rationale: string }

@@ -33,7 +33,10 @@ function Valuation() {
     const [same, setSame] = useState(false);
 
     useEffect(() => {
-        listValuationRuns().then((rs) => setLog(withFills(rs))).catch(() => { });
+        listValuationRuns().then((rs) => {
+            setLog(withFills(rs));
+            if (rs[0]) setDate((current) => current <= rs[0].date ? (nextMarketDate(rs[0].date) ?? current) : current);
+        }).catch(() => { });
     }, []);
 
     async function run() {
@@ -47,6 +50,7 @@ function Valuation() {
             const none = shown.filledOrderIds.length === 0;
             setLast(shown);
             setSame(none);
+            setDate(nextMarketDate(r.date) ?? r.date);
             listValuationRuns()
                 .then((rs) => setLog(withFills(rs)))
                 .catch(() => { if (!none) setLog((l) => [r, ...l]); });
