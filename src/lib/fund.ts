@@ -5,7 +5,7 @@ import path from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { instruments } from './mock-data';
 import { marketClose, nextMarketDate } from './market-data';
-import type { Check, Dashboard, DecisionAction, DecisionRequest, Instrument, NewOrder, Order, Preview, ValuationRun } from './types';
+import type { Check, Dashboard, DecisionAction, DecisionRequest, Instrument, NewOrder, Order, OrderEvent, Person, Preview, ValuationRun } from './types';
 
 const START_CENTS = 100_000_000;
 const START_DATE = '2026-11-04';
@@ -26,6 +26,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS fills (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL UNIQUE, date TEXT NOT NULL, ticker TEXT NOT NULL, quantity INTEGER NOT NULL, price_cents INTEGER NOT NULL, fee_cents INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS runs (date TEXT PRIMARY KEY, payload TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS snapshots (date TEXT PRIMARY KEY, payload TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS order_events (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, type TEXT NOT NULL, at TEXT NOT NULL, actor_id TEXT NOT NULL, actor_name TEXT NOT NULL, details TEXT NOT NULL);
 `);
 
 function person(id: unknown) {
@@ -41,6 +42,30 @@ function instrument(ticker: unknown): Instrument {
 const readOrders = (): Order[] => db.prepare('SELECT payload FROM orders ORDER BY id DESC').all().map((r) => JSON.parse((r as { payload: string }).payload));
 const readRuns = (): ValuationRun[] => db.prepare('SELECT payload FROM runs ORDER BY date DESC').all().map((r) => JSON.parse((r as { payload: string }).payload));
 const fillRows = () => db.prepare('SELECT * FROM fills ORDER BY id ASC').all() as { id: number; order_id: number; date: string; ticker: string; quantity: number; price_cents: number; fee_cents: number }[];
+const addOrderEvent = (orderId: number, type: OrderEvent['type'], at: string, by: Person, details: Record<string, unknown>) =>
+  db.prepare('INSERT INTO order_events (order_id, type, at, actor_id, actor_name, details) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(orderId, type, at, by.id, by.name, JSON.stringify(details));
+const submittedDetails = (order: Order) => ({ ticker: order.instrument.ticker, side: order.side, sizePercent: order.sizePercent, requestedAmountCents: order.requestedAmountCents, ...(order.requestedQuantity === undefined ? {} : { requestedQuantity: order.requestedQuantity }), pitch: order.pitch, rationale: order.rationale });
+const decisionType = (action: DecisionAction): OrderEvent['type'] => ({ APPROVE: 'APPROVED', REJECT: 'REJECTED', CANCEL: 'CANCELLED' })[action] as OrderEvent['type'];
+const SYSTEM: Person = { id: 'system', name: 'System' };
+
+// Existing local databases predate the event log. Reconstruct their known events once.
+db.transaction(() => {
+  for (const order of readOrders().reverse()) {
+    const orderId = Number(order.id.slice(4));
+    const count = db.prepare('SELECT COUNT(*) AS total FROM order_events WHERE order_id = ?').get(orderId) as { total: number };
+    if (count.total) continue;
+    addOrderEvent(orderId, 'SUBMITTED', order.createdAt, order.submittedBy, { ...submittedDetails(order), backfilled: true });
+    if (order.decision) addOrderEvent(orderId, decisionType(order.decision.action), order.decision.at, order.decision.by, { reason: order.decision.reason, backfilled: true });
+    if (order.fill) addOrderEvent(orderId, 'FILLED', order.fill.at ?? `${order.fill.date}T21:00:00.000Z`, SYSTEM, { ...order.fill, backfilled: true });
+  }
+})();
+
+export function listOrderEvents(id: string): OrderEvent[] {
+  if (!readOrders().some((order) => order.id === id)) fail(404, 'NOT_FOUND', 'Order not found.');
+  const rows = db.prepare('SELECT * FROM order_events WHERE order_id = ? ORDER BY id ASC').all(Number(id.slice(4))) as { id: number; order_id: number; type: OrderEvent['type']; at: string; actor_id: string; actor_name: string; details: string }[];
+  return rows.map((row) => ({ id: `event_${String(row.id).padStart(3, '0')}`, orderId: id, type: row.type, at: row.at, by: { id: row.actor_id, name: row.actor_name }, details: JSON.parse(row.details) }));
+}
 const usd = (cents: number) => `USD ${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 const now = () => new Date(process.env.FUND_DEMO_NOW ?? Date.now());
 const nyDate = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
@@ -127,6 +152,7 @@ export const createOrder = db.transaction((body: NewOrder): Order => {
   const result = db.prepare('INSERT INTO orders (payload) VALUES (?)').run(JSON.stringify(order));
   order.id = `ord_${String(result.lastInsertRowid).padStart(3, '0')}`;
   db.prepare('UPDATE orders SET payload = ? WHERE id = ?').run(JSON.stringify(order), result.lastInsertRowid);
+  addOrderEvent(Number(result.lastInsertRowid), 'SUBMITTED', order.createdAt, submitter, submittedDetails(order));
   return order;
 });
 
@@ -149,6 +175,7 @@ export const decideOrder = db.transaction((id: string, body: DecisionRequest): O
   order.status = { APPROVE: 'APPROVED', REJECT: 'REJECTED', CANCEL: 'CANCELLED' }[action] as Order['status'];
   order.decision = { action, by: actor, at: now().toISOString(), reason: reason || null };
   db.prepare('UPDATE orders SET payload = ? WHERE id = ?').run(JSON.stringify(order), Number(id.slice(4)));
+  addOrderEvent(Number(id.slice(4)), decisionType(action), order.decision.at, actor, { reason: order.decision.reason });
   return order;
 });
 
@@ -214,6 +241,7 @@ export const runValuation = db.transaction((date: string): ValuationRun => {
     db.prepare('INSERT INTO fills (order_id, date, ticker, quantity, price_cents, fee_cents) VALUES (?, ?, ?, ?, ?, ?)').run(orderId, date, o.instrument.ticker, o.side === 'SELL' ? -quantity : quantity, price, fee);
     o.status = 'FILLED'; o.fill = { date, at, quantity, priceCents: price, feeCents: fee };
     db.prepare('UPDATE orders SET payload = ? WHERE id = ?').run(JSON.stringify(o), orderId);
+    addOrderEvent(orderId, 'FILLED', at, SYSTEM, { ...o.fill });
   }
   const d = dashboard(date);
   const run: ValuationRun = { date, at, status: 'SUCCESS', filledOrderIds: ready.map((o) => o.id), navCents: d.fund.navCents, cashCents: d.fund.cashCents };

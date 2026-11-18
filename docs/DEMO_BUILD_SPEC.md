@@ -44,6 +44,7 @@ Kellen can finish the layout with the sample JSON below while the routes are bei
 | `POST /api/orders` | Enter order | Validate and create a pending order |
 | `GET /api/orders` | Orders | List orders and their statuses |
 | `POST /api/orders/{id}/decision` | Orders | Approve, reject, or cancel a pending order |
+| `GET /api/orders/{id}/events` | Contributors | Read the order's append-only submission, decision, and fill history |
 | `POST /api/valuation` | Demo control | Fill eligible approved orders and save a daily snapshot |
 | `GET /api/valuation` | Valuation | List saved valuation runs |
 | `GET /api/dashboard` | Dashboard | Latest NAV, cash, performance, holdings, sectors, chart, and trade history |
@@ -140,6 +141,8 @@ If submission fails a rule: HTTP 422 with `{ "error": { "code": "MANDATE_VIOLATI
 Response: HTTP 200 with `{ "order": /* updated order object */ }`. For rejection, use `action: "REJECT"` and a required `reason`. For cancellation, use `action: "CANCEL"` and a required `reason`; only the submitter can cancel a pending order. Approval and rejection require a different committee member from the submitter. The updated order has `decision: { "action": "APPROVE", "by": { "id": "angelo", "name": "Angelo" }, "at": "2026-11-04T19:30:00Z", "reason": null }`.
 
 Self-approval returns HTTP 403 with `{ "error": { "code": "SELF_APPROVAL", "message": "You cannot approve your own order." } }`. An order that is no longer pending returns HTTP 409 with `code: "INVALID_STATUS"`.
+
+`GET /api/orders/ord_001/events` returns `{ "events": [...] }` in recorded order. Each event has `id`, `orderId`, `type` (`SUBMITTED`, `APPROVED`, `REJECTED`, `CANCELLED`, or `FILLED`), an ISO UTC `at` timestamp, `by: { id, name }`, and `details`. Invalid submissions and failed decisions add no event; repeating a saved valuation adds no second fill event. Older local orders are reconstructed once from their saved order records and have `details.backfilled: true`.
 
 ### Valuation
 

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 async function freePort() {
   const server = createServer();
@@ -272,3 +273,61 @@ test('cancelled sells release reservations and concurrent sells cannot oversubsc
   const retry = await request(base, '/api/orders', saleBody);
   assert.equal(retry.status, 201);
 }));
+
+test('order history preserves submission, approval, and fill without duplicate events', async () => withFreshServer(async (base) => {
+  assert.equal((await request(base, '/api/orders/ord_999/events')).status, 404);
+  const created = (await request(base, '/api/orders', order('JNJ', 6))).data.order;
+  const url = `/api/orders/${created.id}/events`;
+  const first = (await request(base, url)).data.events;
+  assert.deepEqual(first.map((event) => event.type), ['SUBMITTED']);
+  assert.equal(first[0].by.id, 'kellen');
+  assert.equal(first[0].details.requestedAmountCents, 6_000_000);
+  await request(base, `/api/orders/${created.id}/decision`, { actorId: 'kellen', action: 'APPROVE' });
+  assert.equal((await request(base, url)).data.events.length, 1);
+  await request(base, `/api/orders/${created.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  const approved = (await request(base, url)).data.events;
+  assert.deepEqual(approved.map((event) => event.type), ['SUBMITTED', 'APPROVED']);
+  assert.equal(approved[1].by.id, 'angelo');
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const filled = (await request(base, url)).data.events;
+  assert.deepEqual(filled.map((event) => event.type), ['SUBMITTED', 'APPROVED', 'FILLED']);
+  assert.equal(filled[2].details.quantity, 297);
+  assert.equal(filled[2].details.feeCents, 5_999);
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  assert.deepEqual((await request(base, url)).data.events, filled);
+  const rejected = (await request(base, '/api/orders', order('XOM', 5))).data.order;
+  await request(base, `/api/orders/${rejected.id}/decision`, { actorId: 'angelo', action: 'REJECT', reason: 'Pitch withdrawn' });
+  const rejectedEvents = (await request(base, `/api/orders/${rejected.id}/events`)).data.events;
+  assert.deepEqual(rejectedEvents.map((event) => event.type), ['SUBMITTED', 'REJECTED']);
+  assert.equal(rejectedEvents[1].details.reason, 'Pitch withdrawn');
+}));
+
+test('older local orders receive clearly marked reconstructed history', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'investsync-api-'));
+  const dbPath = path.join(directory, 'fund.sqlite');
+  let server;
+  try {
+    const database = new Database(dbPath);
+    database.exec('CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL)');
+    database.prepare('INSERT INTO orders (payload) VALUES (?)').run(JSON.stringify({
+      id: 'ord_001', createdAt: '2026-11-10T14:00:00Z', instrument: { ticker: 'JNJ' }, side: 'BUY', sizePercent: 6,
+      requestedAmountCents: 6_000_000, pitch: 'Older pitch', rationale: 'Older rationale', submittedBy: { id: 'kellen', name: 'Kellen' },
+      status: 'FILLED', decision: { action: 'APPROVE', by: { id: 'angelo', name: 'Angelo' }, at: '2026-11-10T15:00:00Z', reason: null },
+      fill: { date: '2026-11-12', quantity: 297, priceCents: 20_200, feeCents: 5_999 },
+    }));
+    database.close();
+    server = await start(dbPath);
+    const events = (await request(server.base, '/api/orders/ord_001/events')).data.events;
+    assert.deepEqual(events.map((event) => event.type), ['SUBMITTED', 'APPROVED', 'FILLED']);
+    assert.ok(events.every((event) => event.details.backfilled === true));
+    assert.equal(events[2].details.priceCents, 20_200);
+  } finally {
+    server?.child.kill();
+    if (path.dirname(directory) === tmpdir() && path.basename(directory).startsWith('investsync-api-')) {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try { await rm(directory, { recursive: true, force: true }); break; }
+        catch (error) { if (attempt === 9) throw error; await delay(200); }
+      }
+    }
+  }
+});
