@@ -14,55 +14,73 @@
 
 **Project #1 · InvestSync Technology**
 
-Virtual Fund is a paper portfolio for the club: members can propose stock trades, approve each other's decisions, and see how the fund performs. It uses simulated money. No brokerage account or real trade is involved.
+A paper portfolio for the club. One committee member proposes a trade, another decides whether to approve it, and the app records the decision and measures the fund against the market. All money and trades are simulated.
 
-## What works today
+<p>
+  <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-1B3A8C">
+  <img alt="API tests: 9 passing" src="https://img.shields.io/badge/API%20tests-9%20passing-2E7D32">
+  <img alt="Market: US demo" src="https://img.shields.io/badge/market-US%20demo-1B3A8C">
+</p>
 
-- The local fund starts with **USD 1,000,000** and a fixed list of five US stocks. One stock may be at most **10%** of fund value and one sector at most **30%**. Each fill pays a **0.10%** fee.
-- A committee member enters a buy or sell order with a pitch and rationale. Another member must approve it. The person who entered it cannot approve it themselves.
-- The app checks position, sector, cash, and available shares before saving an order. Pending sells reserve shares, so two orders cannot sell the same shares.
-- An approved order fills when someone runs the demo valuation for an eligible US trading date. Buys use whole shares; sells use a fixed number of whole shares chosen when the order is submitted. Both use that date's simulated closing price.
-- The dashboard shows cash, holdings, fund value (NAV), sector weights, and performance against a simulated S&P 500 benchmark. The ledger lists every buy and sell fill, newest first.
-- Orders, decisions, fills, valuation snapshots, and an order event history persist in a local SQLite database. The app exposes each order's event history at `GET /api/orders/{id}/events`; older local orders have reconstructed events marked `backfilled`.
+> For education within the InvestSync student investment club. No real money or brokerage account is involved.
 
-## Try the demo
+## What it does
 
-Use **Node.js 20.9 or newer** and npm:
+The current **local demo** starts with USD 1,000,000 and five US stocks. A committee member can submit a buy or sell order with a pitch and rationale. Another member must approve it; nobody can approve their own order. The app checks the 10% position limit, 30% sector limit, cash, and shares available to sell. Each fill pays a 0.10% fee.
+
+An approved order fills when someone runs valuation for an eligible US trading date. The dashboard then shows fund value (NAV), cash, holdings, sector weights, and performance against a simulated S&P 500 benchmark. The ledger shows each buy and sell fill. Orders, decisions, fills, and daily fund snapshots are saved locally.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Submit order] --> B[Check fund rules]
+    B --> C[Another member approves]
+    C --> D[Run demo valuation]
+    D --> E[Fill at that date's simulated close]
+    E --> F[Update ledger and dashboard]
+```
+
+The screens and API are part of one Next.js app. The API applies the fund rules and stores results in SQLite; dated closing prices and benchmark levels are included for the demo. Buys use whole shares. Sells reserve a fixed number of whole shares when submitted, so two pending sells cannot use the same shares. A valuation deducts fees and saves a daily snapshot. Ledger fills and per-order events are appended rather than edited.
+
+Demo prices cover **4 November to 4 December 2026**. A date without prices saves nothing, and running the same date twice does not duplicate a fill. This is a manual, local valuation; scheduled jobs and live prices are future work.
+
+## Getting started
+
+You need **Node.js 20.9 or newer** and npm. No API key is required.
 
 ```bash
+git clone https://github.com/investsync-cuhksz/virtual-fund.git
+cd virtual-fund
 npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The real local API is used by default; set `NEXT_PUBLIC_USE_MOCK=true` in a local `.env` file only if you want the browser-only sample data.
+Open [http://localhost:3000](http://localhost:3000). The app uses its local API by default. The SQLite file at `data/virtual-fund.sqlite` is ignored by Git; stop the app and delete that file to reset your demo. Set `NEXT_PUBLIC_USE_MOCK=true` in a local `.env` file only to use the browser-only sample data.
 
-1. On **Enter order**, act as Kellen and submit a buy order for JNJ with a size of 6%, a pitch, and a rationale.
-2. Switch to Angelo on **Orders** and approve it. An order cannot be approved by its submitter.
-3. On **Valuation**, run the prefilled next demo trading date. The order fills at that date's simulated close.
-4. Check the new holding, cash, and performance on **Dashboard**, then open **Ledger** to see the fill.
-5. Submit a sell order for some of the held JNJ shares, have the other member approve it, and run the next valuation date. The ledger keeps both fills.
+## Using it
 
-Demo closing prices and benchmark levels cover **4 November to 4 December 2026**. The valuation page shows the available range. A date without demo prices returns an error and saves nothing. Running the same date twice does not create a second fill.
+1. On **Enter order**, submit a buy order for JNJ at 6% with a pitch and rationale.
+2. Switch to the other committee member on **Orders** and approve it.
+3. On **Valuation**, run the prefilled next demo trading date.
+4. Check the holding and fund value on **Dashboard**, then open **Ledger** to see the fill.
+5. Submit a sell order for some of those shares, have the other member approve it, and run the next valuation date.
 
-## How it works
-
-The screens and API run in the **same Next.js app**. A screen asks the API for data; the API checks the fund rules and saves orders and results in SQLite. Simulated dated market prices come from `src/lib/market-data.ts`.
+## Project structure
 
 ```text
-Screens → API routes → fund rules → SQLite
-                       ↑
-             simulated market closes
+src/app/          screens and API routes
+src/lib/          fund rules, calculations, and demo market data
+tests/            API workflow tests
+docs/             demo API contract and sample responses
+data/             local SQLite database (created when the app runs)
 ```
 
-Order size is entered as a percentage of the fund's latest value. The API records the requested dollar amount when the order is submitted. For a sell, it also fixes the share count using the latest saved price; the sale proceeds use the price on the fill date. A valuation run applies eligible approved orders, deducts fees, updates cash and holdings, and saves a daily snapshot. Ledger fills and order events are appended rather than edited. Money sent through the API is stored as integer US cents.
+The [demo build spec](docs/DEMO_BUILD_SPEC.md) lists the API routes and sample JSON. The per-order audit history is available at `GET /api/orders/{id}/events`; events reconstructed from older local databases are marked `backfilled`.
 
-The local database is `data/virtual-fund.sqlite` and is ignored by Git. Stop the app and delete that file to reset your own demo; this does not affect anyone else's copy.
+## Contributing
 
-## For contributors
-
-Pages are in `src/app/`, API routes in `src/app/api/`, fund calculations and market data in `src/lib/`, and API workflow tests in `tests/`. The [demo build spec](docs/DEMO_BUILD_SPEC.md) has request and response examples. Keep rule checks and money calculations on the server so every screen sees the same result.
-
-Before opening a pull request, run:
+Keep fund rules and money calculations on the server so every screen sees the same result. Before opening a pull request, run:
 
 ```bash
 npm run lint
@@ -70,8 +88,8 @@ npm run build
 npm run test:api
 ```
 
-The API tests use temporary databases and do not change your local demo. Run the build before `test:api`, which starts the built app on a temporary port.
+The API tests use temporary databases and do not change your local demo. Build before `test:api`, which starts the built app on a temporary port.
 
-## Still to build
+## What's next
 
-This is a local demo with two selectable committee identities, not a login system. It does not yet host a shared club fund or use live prices. Later work includes website login, configurable fund settings, Hong Kong and mainland China listings with FX and board lots, an AKShare-backed price cache, scheduled valuation, dividends and splits, and ledger corrections. The current ledger is read-only and contains fills.
+The demo has two selectable committee identities but no login or shared deployment. Planned work includes website login, editable fund settings, Hong Kong and mainland China listings with FX and board lots, an AKShare-backed price cache, scheduled valuation, dividends and splits, and ledger corrections. The current ledger is read-only and contains fills.
