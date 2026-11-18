@@ -31,7 +31,7 @@ A paper portfolio the club runs, with every decision recorded and measured again
 
 ## MVP workflow
 
-A committee member enters an order, another approves it, it fills automatically at the next close, the NAV updates, and the dashboard shows the result. All money calculations are covered by passing tests.
+A committee member enters a buy or sell order, another approves it, and the demo valuation fills it at the next close. The NAV, dashboard, and append-only trade ledger then show the result.
 
 ## Getting started
 

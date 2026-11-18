@@ -62,7 +62,7 @@ test('invalid submissions fail without creating orders', async () => withFreshSe
   const cases = [
     [order('FAKE', 5), 404, 'UNKNOWN_INSTRUMENT'],
     [{ ...order('JNJ', 5), actorId: 'unknown' }, 400, 'INVALID_ACTOR'],
-    [{ ...order('JNJ', 5), side: 'SELL' }, 400, 'UNSUPPORTED_SIDE'],
+    [{ ...order('JNJ', 5), side: 'HOLD' }, 400, 'UNSUPPORTED_SIDE'],
     [order('JNJ', 0), 400, 'INVALID_SIZE'],
     [order('JNJ', 0.001), 400, 'INVALID_SIZE'],
     [{ ...order('JNJ', 5), pitch: 12 }, 400, 'REQUIRED_TEXT'],
@@ -211,3 +211,64 @@ test('order approval, fill, saved dashboard, and idempotent valuation', async ()
     }
   }
 });
+
+test('sell orders reserve held shares, fill at the next close, and keep ledger rows', async () => withFreshServer(async (base) => {
+  const buy = (await request(base, '/api/orders', order('JNJ', 6))).data.order;
+  await request(base, `/api/orders/${buy.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const empty = await request(base, '/api/orders/preview', { ticker: 'AAPL', side: 'SELL', sizePercent: 2 });
+  assert.equal(empty.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+
+  const preview = await request(base, '/api/orders/preview', { ticker: 'JNJ', side: 'SELL', sizePercent: 3 });
+  assert.equal(preview.data.allowed, true);
+  assert.match(preview.data.checks.find((c) => c.code === 'SHARES_HELD').label, /148 .*297 held/);
+  const sale = await request(base, '/api/orders', { ...order('JNJ', 3), side: 'SELL' });
+  assert.equal(sale.status, 201);
+  assert.equal(sale.data.order.requestedQuantity, 148);
+  assert.equal((await request(base, `/api/orders/${sale.data.order.id}/decision`, { actorId: 'kellen', action: 'APPROVE' })).status, 403);
+  const oversell = await request(base, '/api/orders', { ...order('JNJ', 4, 'angelo'), side: 'SELL' });
+  assert.equal(oversell.status, 422);
+  assert.equal(oversell.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+  assert.equal((await request(base, `/api/orders/${sale.data.order.id}/decision`, { actorId: 'angelo', action: 'APPROVE' })).status, 200);
+
+  const filled = await request(base, '/api/valuation', { date: '2026-11-13' });
+  assert.deepEqual(filled.data.run.filledOrderIds, [sale.data.order.id]);
+  assert.equal(filled.data.run.cashCents, 96_966_426);
+  assert.equal(filled.data.run.navCents, 99_961_326);
+  const dashboard = (await request(base, '/api/dashboard')).data;
+  assert.equal(dashboard.holdings[0].quantity, 149);
+  assert.equal(dashboard.recentTrades.length, 2);
+  assert.deepEqual(dashboard.recentTrades.map((t) => t.side), ['SELL', 'BUY']);
+  assert.equal(dashboard.recentTrades[0].quantity, 148);
+  assert.equal(dashboard.recentTrades[0].priceCents, 20_100);
+  assert.equal(dashboard.recentTrades[0].feeCents, 2_975);
+  assert.equal(dashboard.recentTrades[0].executedAt, '2026-11-13T21:00:00.000Z');
+  assert.deepEqual((await request(base, '/api/valuation', { date: '2026-11-13' })).data.run, filled.data.run);
+  assert.equal((await request(base, '/api/dashboard')).data.recentTrades.length, 2);
+
+  const lastSale = await request(base, '/api/orders', { ...order('JNJ', 3), side: 'SELL' });
+  assert.equal(lastSale.data.order.requestedQuantity, 149);
+  await request(base, `/api/orders/${lastSale.data.order.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  const finalRun = await request(base, '/api/valuation', { date: '2026-11-16' });
+  assert.equal(finalRun.data.run.cashCents, 99_988_101);
+  assert.equal(finalRun.data.run.navCents, 99_988_101);
+  const after = (await request(base, '/api/dashboard')).data;
+  assert.deepEqual(after.holdings, []);
+  assert.equal(after.recentTrades.length, 3);
+  assert.equal(after.sectorBreakdown.find((s) => s.sector === 'Cash').weightPercent, 100);
+}));
+
+test('cancelled sells release reservations and concurrent sells cannot oversubscribe shares', async () => withFreshServer(async (base) => {
+  const buy = (await request(base, '/api/orders', order('AAPL', 8))).data.order;
+  await request(base, `/api/orders/${buy.id}/decision`, { actorId: 'angelo', action: 'APPROVE' });
+  await request(base, '/api/valuation', { date: '2026-11-12' });
+  const saleBody = { ...order('AAPL', 5), side: 'SELL' };
+  const [first, second] = await Promise.all([request(base, '/api/orders', saleBody), request(base, '/api/orders', { ...saleBody, actorId: 'angelo' })]);
+  assert.deepEqual([first.status, second.status].sort(), [201, 422]);
+  const saved = first.status === 201 ? first : second;
+  const rejected = first.status === 422 ? first : second;
+  assert.equal(rejected.data.checks.find((c) => c.code === 'SHARES_HELD').status, 'FAIL');
+  await request(base, `/api/orders/${saved.data.order.id}/decision`, { actorId: saved.data.order.submittedBy.id, action: 'CANCEL', reason: 'Changed mind' });
+  const retry = await request(base, '/api/orders', saleBody);
+  assert.equal(retry.status, 201);
+}));

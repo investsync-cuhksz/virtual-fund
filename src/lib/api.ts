@@ -3,8 +3,7 @@ import * as mock from './mock-data';
 import { usd } from './format';
 import type { Check, Dashboard, DecisionRequest, Instrument, NewOrder, Order, OrderStatus, Preview, Side, ValuationRun } from './types';
 
-// const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
-const USE_MOCK = 'true';
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
 export class ApiError extends Error {
   status: number; code: string; checks?: Check[];
@@ -21,7 +20,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 }
 const post = <T>(url: string, data: unknown) => call<T>(url, { method: 'POST', body: JSON.stringify(data) });
 
-// ---- mock backend (display only) ----
+// ---- optional browser-only demo mode ----
 const STORE = 'mock-fund-v1';
 const saved: { orders?: Order[]; valuationLog?: ValuationRun[]; asOf?: string } | null = (() => {
   if (typeof window === 'undefined') return null;
@@ -41,7 +40,7 @@ function fillTrades() {
     .filter((o) => o.status === 'FILLED' && o.fill?.date)
     .map((o) => {
       const price = PRICES[o.instrument.ticker];
-      const shares = Math.floor(o.requestedAmountCents / price);
+      const shares = o.side === 'SELL' ? (o.requestedQuantity ?? Math.floor(o.requestedAmountCents / price)) : Math.floor(o.requestedAmountCents / price);
       const sign = o.side === 'SELL' ? -1 : 1;
       return { o, price, shares, qty: sign * shares, value: sign * shares * price, fee: Math.round(shares * price * 0.001) };
     });
@@ -52,7 +51,7 @@ function sellable(ticker: string) {
   const held = fillTrades().filter((t) => t.o.instrument.ticker === ticker).reduce((s, t) => s + t.qty, 0);
   const reserved = orders
     .filter((o) => (o.status === 'PENDING' || o.status === 'APPROVED') && o.side === 'SELL' && o.instrument.ticker === ticker)
-    .reduce((s, o) => s + Math.floor(o.requestedAmountCents / PRICES[ticker]), 0);
+    .reduce((s, o) => s + (o.requestedQuantity ?? Math.floor(o.requestedAmountCents / PRICES[ticker])), 0);
   return { held, free: held - reserved };
 }
 
@@ -157,7 +156,9 @@ export async function createOrder(b: NewOrder): Promise<{ order: Order }> {
   const order: Order = {
     id: `ord_${String(orders.length + 1).padStart(3, '0')}`, createdAt: new Date().toISOString(),
     instrument: mock.instruments.find((i) => i.ticker === b.ticker)!, side: b.side, sizePercent: b.sizePercent,
-    requestedAmountCents: p.estimatedAmountCents, pitch: b.pitch, rationale: b.rationale,
+    requestedAmountCents: p.estimatedAmountCents,
+    ...(b.side === 'SELL' ? { requestedQuantity: Math.floor(p.estimatedAmountCents / PRICES[b.ticker]) } : {}),
+    pitch: b.pitch, rationale: b.rationale,
     submittedBy: { id: b.actorId, name: cap(b.actorId) }, status: 'PENDING', decision: null, fill: null,
   };
   orders = [order, ...orders];

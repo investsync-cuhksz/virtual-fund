@@ -1,4 +1,4 @@
-// Temporary data in the shape of the API responses. Used while NEXT_PUBLIC_USE_MOCK is not "false".
+// Optional browser-only demo data when NEXT_PUBLIC_USE_MOCK=true.
 import type { Dashboard, Instrument, Order } from './types';
 
 export const instruments: Instrument[] = [
