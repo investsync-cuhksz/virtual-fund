@@ -14,7 +14,7 @@
 
 **Project #1 · InvestSync Technology**
 
-A paper portfolio for the club. One committee member proposes a trade, another decides whether to approve it, and the app records the decision and measures the fund against the market. All money and trades are simulated.
+A paper portfolio for the club. Research pitches an investment idea, one committee member proposes a trade, and another decides whether to approve it. The app records what happened and shows how the fund performs against a market benchmark. All money and trades are simulated.
 
 <p>
   <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-1B3A8C">
@@ -26,9 +26,12 @@ A paper portfolio for the club. One committee member proposes a trade, another d
 
 ## What it does
 
-The current **local demo** starts with USD 1,000,000 and five US stocks. A committee member can submit a buy or sell order with a pitch and rationale. Another member must approve it; nobody can approve their own order. The app checks the 10% position limit, 30% sector limit, cash, and shares available to sell. Each fill pays a 0.10% fee.
+The goal is a track record the club can explain: which ideas led to trades, who approved them, what the fund held afterward, and how those decisions compared with the market. The current **local demo** covers that workflow with a fixed list of five US stocks and USD 1,000,000 in starting capital.
 
-An approved order fills when someone runs valuation for an eligible US trading date. The dashboard then shows fund value (NAV), cash, holdings, sector weights, and performance against a simulated S&P 500 benchmark. The ledger shows each buy and sell fill. Orders, decisions, fills, and daily fund snapshots are saved locally.
+- **Propose and decide:** A committee member enters a buy or sell order with a pitch note and rationale. Another member can approve or reject it. Nobody can approve their own order; the submitter can cancel a pending order.
+- **Check the fund rules:** Before accepting an order, the app checks the 10% position limit, 30% sector limit, available cash, and shares available to sell. Pending sells reserve their shares so they cannot be sold twice.
+- **Simulate the trade:** An approved order fills when someone runs valuation for an eligible US trading date. It uses that date's simulated closing price, whole shares, and a 0.10% fee.
+- **See the result:** The dashboard shows cash, holdings, fund value (NAV), sector weights, and performance against a simulated S&P 500 benchmark. The ledger lists every buy and sell fill. Orders, decisions, fills, and daily snapshots are saved locally.
 
 ## How it works
 
@@ -41,9 +44,17 @@ flowchart LR
     E --> F[Update ledger and dashboard]
 ```
 
-The screens and API are part of one Next.js app. The API applies the fund rules and stores results in SQLite; dated closing prices and benchmark levels are included for the demo. Buys use whole shares. Sells reserve a fixed number of whole shares when submitted, so two pending sells cannot use the same shares. A valuation deducts fees and saves a daily snapshot. Ledger fills and per-order events are appended rather than edited.
+The screens and API are part of one Next.js app. The browser sends orders and decisions to the API; the API applies the rules and stores the results in a local SQLite database. The server, rather than the browser, calculates money and holdings so every screen uses the same figures.
 
-Demo prices cover **4 November to 4 December 2026**. A date without prices saves nothing, and running the same date twice does not duplicate a fill. This is a manual, local valuation; scheduled jobs and live prices are future work.
+Order size is a percentage of the latest fund value. For a buy, the app works out how many whole shares fit at the closing price when the order fills. For a sell, it fixes and reserves the number of shares when the order is submitted; the eventual proceeds use the fill date's price. A valuation applies eligible approved orders, deducts fees, updates cash and holdings, and saves a daily snapshot for the dashboard. Ledger fills and per-order events are appended rather than edited.
+
+| Term | In this project |
+|---|---|
+| **Holdings** | The shares the simulated fund currently owns. |
+| **NAV** | The fund's total value: cash plus the current value of its holdings. |
+| **Benchmark** | A market comparison, currently a simulated S&P 500 series. |
+
+The included closing prices and benchmark levels cover **4 November to 4 December 2026**. A date without demo prices saves nothing, and running the same date twice does not duplicate a fill. Valuation is triggered by hand for now; scheduled jobs and live market data are future work.
 
 ## Getting started
 
@@ -56,15 +67,20 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The app uses its local API by default. The SQLite file at `data/virtual-fund.sqlite` is ignored by Git; stop the app and delete that file to reset your demo. Set `NEXT_PUBLIC_USE_MOCK=true` in a local `.env` file only to use the browser-only sample data.
+Open [http://localhost:3000](http://localhost:3000). The app uses its local API by default; no separate backend server is needed. It creates `data/virtual-fund.sqlite` as you use it. This file is ignored by Git, so a fresh clone starts with the full simulated capital and no past trades. To reset your own demo, stop the app and delete that file. Set `NEXT_PUBLIC_USE_MOCK=true` in a local `.env` file only if you want browser-only sample data instead of the working API.
 
 ## Using it
 
-1. On **Enter order**, submit a buy order for JNJ at 6% with a pitch and rationale.
-2. Switch to the other committee member on **Orders** and approve it.
-3. On **Valuation**, run the prefilled next demo trading date.
-4. Check the holding and fund value on **Dashboard**, then open **Ledger** to see the fill.
-5. Submit a sell order for some of those shares, have the other member approve it, and run the next valuation date.
+This short walkthrough starts with an empty local database:
+
+1. On **Dashboard**, note the USD 1,000,000 starting cash and no holdings.
+2. On **Enter order**, submit a buy order for JNJ at 6% of NAV with a pitch and rationale. The rule checks show whether the order is allowed.
+3. Switch to the other committee member on **Orders** and approve it. The order stays approved until valuation runs.
+4. On **Valuation**, run the next available demo trading date. The app fills the order and saves the updated fund value.
+5. Return to **Dashboard** to see the new holding and reduced cash, then open **Ledger** to see the fill and its pitch note.
+6. Submit a smaller JNJ sell, have the other member approve it, and run the following valuation date. The ledger keeps both fills.
+
+The member selector is only for the local demo; it is not a login system.
 
 ## Project structure
 
@@ -76,11 +92,11 @@ docs/             demo API contract and sample responses
 data/             local SQLite database (created when the app runs)
 ```
 
-The [demo build spec](docs/DEMO_BUILD_SPEC.md) lists the API routes and sample JSON. The per-order audit history is available at `GET /api/orders/{id}/events`; events reconstructed from older local databases are marked `backfilled`.
+The [demo build spec](docs/DEMO_BUILD_SPEC.md) lists the API routes and sample JSON for anyone working on a screen or server feature. The API also exposes each order's submission, decision, and fill history at `GET /api/orders/{id}/events`. Events reconstructed from older local databases are marked `backfilled`.
 
 ## Contributing
 
-Keep fund rules and money calculations on the server so every screen sees the same result. Before opening a pull request, run:
+Contributions can be a small UI improvement, a clearer demo flow, a fund-rule fix, or a test. Keep fund rules and money calculations on the server so every screen sees the same result. Before opening a pull request, run:
 
 ```bash
 npm run lint
@@ -92,4 +108,9 @@ The API tests use temporary databases and do not change your local demo. Build b
 
 ## What's next
 
-The demo has two selectable committee identities but no login or shared deployment. Planned work includes website login, editable fund settings, Hong Kong and mainland China listings with FX and board lots, an AKShare-backed price cache, scheduled valuation, dividends and splits, and ledger corrections. The current ledger is read-only and contains fills.
+The demo runs locally with two selectable committee identities. It has no login or shared deployment yet. The next stages are:
+
+- Connect to the club website's login and make the fund available to the committee.
+- Make fund settings editable and add Hong Kong and mainland China listings, currency conversion, and board-lot rules.
+- Replace the fixed demo prices with a cached market-data source, then schedule valuation after market close.
+- Handle dividends, splits, and ledger corrections while preserving the trade history. The current ledger is read-only and contains fills.
