@@ -16,9 +16,6 @@ const STEPS = [
     'Save the daily snapshot that the dashboard shows',
 ];
 
-const key = (x: ValuationRun) => JSON.stringify([x.date, x.status, x.filledOrderIds, x.navCents, x.cashCents]);
-const withFills = (rs: ValuationRun[]) => rs.filter((r) => r.filledOrderIds.length > 0);
-
 function nextTradingDate() {
     const todayInNewYork = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     return nextMarketDate(todayInNewYork) ?? '';
@@ -30,11 +27,11 @@ function Valuation() {
     const [err, setErr] = useState('');
     const [log, setLog] = useState<ValuationRun[]>([]);
     const [last, setLast] = useState<ValuationRun | null>(null);
-    const [same, setSame] = useState(false);
+    const [repeat, setRepeat] = useState(false);
 
     useEffect(() => {
         listValuationRuns().then((rs) => {
-            setLog(withFills(rs));
+            setLog(rs);
             if (rs[0]) setDate((current) => current <= rs[0].date ? (nextMarketDate(rs[0].date) ?? current) : current);
         }).catch(() => { });
     }, []);
@@ -45,15 +42,13 @@ function Valuation() {
         try {
             const before = await listValuationRuns().catch(() => log);
             const r = await runValuation(date);
-            const seen = before.some((x) => key(x) === key(r)); // this run is already in the log
-            const shown = seen ? { ...r, filledOrderIds: [] } : r; // already run: 0 filled this time
-            const none = shown.filledOrderIds.length === 0;
-            setLast(shown);
-            setSame(none);
+            const already = before.some((x) => x.date === r.date); // this date was run before
+            setLast(already ? { ...r, filledOrderIds: [] } : r); // run again: 0 filled this time
+            setRepeat(already);
             setDate(nextMarketDate(r.date) ?? r.date);
             listValuationRuns()
-                .then((rs) => setLog(withFills(rs)))
-                .catch(() => { if (!none) setLog((l) => [r, ...l]); });
+                .then(setLog)
+                .catch(() => { if (!already) setLog((l) => [r, ...l]); });
         } catch (e) {
             setErr(e instanceof Error ? e.message : 'The valuation run failed.');
         } finally {
@@ -90,7 +85,8 @@ function Valuation() {
                                     {last.status === 'SUCCESS' ? 'Success' : last.status} for {shortDate(last.date)}
                                 </p>
                                 <p className="mt-1">{last.filledOrderIds.length} order(s) filled · NAV {usd(last.navCents)} · Cash {usd(last.cashCents)}</p>
-                                {same && <p className="mt-1 text-slate-600">No orders were filled, so nothing is added to the log.</p>}
+                                {repeat && <p className="mt-1 text-slate-600">Already run for this date, so nothing was filled and the log is unchanged.</p>}
+                                {!repeat && last.filledOrderIds.length === 0 && <p className="mt-1 text-slate-600">No orders were filled for this date. The run is still saved in the log.</p>}
                                 <p className="mt-2"><Link href="/dashboard" className="font-semibold text-blue-800 underline">View the dashboard</Link></p>
                             </>
                         )}
@@ -110,7 +106,7 @@ function Valuation() {
             <section className={`${card} overflow-x-auto`}>
                 <h2 className="mb-3 text-base font-bold">Valuation log</h2>
                 {log.length === 0 ? (
-                    <p className="text-sm text-slate-600">Nothing yet. Every run that fills an order appears here for all members.</p>
+                    <p className="text-sm text-slate-600">Nothing yet. Every valuation run appears here for all members.</p>
                 ) : (
                     <table className="w-full min-w-[560px] text-left text-sm">
                         <thead>

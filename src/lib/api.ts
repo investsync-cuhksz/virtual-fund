@@ -28,6 +28,8 @@ const saved: { orders?: Order[]; valuationLog?: ValuationRun[]; asOf?: string } 
 })();
 let orders: Order[] = saved?.orders ?? [...mock.orders];
 let valuationLog: ValuationRun[] = saved?.valuationLog ?? []; // newest first
+const loggedDates = new Set<string>();
+valuationLog.forEach((run) => loggedDates.add(run.date));
 const NAV = mock.dashboardStart.fund.navCents;
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 // Mock only: whole shares at fixed closing prices (in cents) with a 0.10% fee. The real server does this.
@@ -197,16 +199,20 @@ export async function runValuation(date: string): Promise<ValuationRun> {
     return r;
   }
   const at = `${date}T${new Date().toISOString().slice(11)}`;
-  const ready = orders.filter((o) => o.status === 'APPROVED');
+  const ready = loggedDates.has(date) ? [] : orders.filter((o) => o.status === 'APPROVED');
   if (ready.length > 0) {
     orders = orders.map((o) => (o.status === 'APPROVED' ? { ...o, status: 'FILLED' as OrderStatus, fill: { date, at } } : o));
     asOf = date;
   }
   const d = buildDash();
   const run: ValuationRun = { date, status: 'SUCCESS', filledOrderIds: ready.map((o) => o.id), navCents: d.fund.navCents, cashCents: d.fund.cashCents, at };
-  // Only runs that fill something are logged
-  if (ready.length > 0) {
+  // Log every run that fills something, and the first run for each new date
+  const shouldLog = ready.length > 0 || !loggedDates.has(date);
+  if (shouldLog) {
     valuationLog = [run, ...valuationLog];
+    loggedDates.add(date);
+  }
+  if (shouldLog) {
     changed();
   }
   return run;
