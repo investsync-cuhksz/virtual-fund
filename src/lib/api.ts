@@ -99,10 +99,12 @@ function buildDash(): Dashboard {
   };
 }
 
-function mockPreview(ticker: string, size: number, side: Side = 'BUY'): Preview {
+// The size is either a percent of NAV or an amount in US dollars. Both give the other back in the Preview.
+function mockPreview(ticker: string, size: { sizePercent?: number; amountUsd?: number }, side: Side = 'BUY'): Preview {
   const i = mock.instruments.find((x) => x.ticker === ticker);
   if (!i) throw new ApiError(404, 'UNKNOWN_INSTRUMENT', 'That ticker is not in the fund list.');
-  const amount = Math.round((NAV * size) / 100);
+  const amount = size.amountUsd !== undefined ? Math.round(size.amountUsd * 100) : Math.round((NAV * (size.sizePercent ?? 0)) / 100);
+  const pct = size.sizePercent ?? Math.round((amount / NAV) * 10_000) / 100;
   if (side === 'SELL') {
     const shares = Math.floor(amount / PRICES[ticker]);
     const { held, free } = sellable(ticker);
@@ -113,16 +115,16 @@ function mockPreview(ticker: string, size: number, side: Side = 'BUY'): Preview 
       { code: 'SHARES_HELD', label: `Shares to sell: ${shares} (${free} available of ${held} held)`, status: shares >= 1 && shares <= free ? 'PASS' : 'FAIL' },
       { code: 'INSTRUMENT_TYPE', label: 'Instrument type allowed (stock)', status: 'PASS' },
     ];
-    return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks };
+    return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks, sizePercent: pct, maxAmountCents: Math.max(free, 0) * PRICES[ticker] };
   }
   const checks: Check[] = [
-    { code: 'POSITION_LIMIT', label: `Position weight ${size.toFixed(1)}% (limit 10%)`, status: size > 10 ? 'FAIL' : 'PASS' },
-    { code: 'SECTOR_LIMIT', label: `${i.sector} ${size.toFixed(1)}% (limit 30%)`, status: size > 30 ? 'FAIL' : 'PASS' },
+    { code: 'POSITION_LIMIT', label: `Position weight ${pct.toFixed(1)}% (limit 10%)`, status: pct > 10 ? 'FAIL' : 'PASS' },
+    { code: 'SECTOR_LIMIT', label: `${i.sector} ${pct.toFixed(1)}% (limit 30%)`, status: pct > 30 ? 'FAIL' : 'PASS' },
     { code: 'CASH', label: `Cash available for ${usd(amount)}`, status: 'PASS' },
     { code: 'SHARES_HELD', label: 'Shares held to sell', status: 'NA' },
     { code: 'INSTRUMENT_TYPE', label: 'Instrument type allowed (stock)', status: 'PASS' },
   ];
-  return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks };
+  return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks, sizePercent: pct, maxAmountCents: Math.round((NAV * 10) / 100) };
 }
 
 // ---- API functions ----
@@ -134,14 +136,17 @@ const changed = () => {
   }
 };
 
-export async function searchInstruments(q: string): Promise<Instrument[]> {
-  if (!USE_MOCK) return (await call<{ instruments: Instrument[] }>(`/api/instruments?q=${encodeURIComponent(q)}`)).instruments;
+// With sellableOnly, only instruments the fund can sell are returned, each with the shares still free to sell.
+export async function searchInstruments(q: string, sellableOnly = false): Promise<Instrument[]> {
+  if (!USE_MOCK) return (await call<{ instruments: Instrument[] }>(`/api/instruments?q=${encodeURIComponent(q)}${sellableOnly ? '&sellable=true' : ''}`)).instruments;
   const s = q.trim().toLowerCase();
-  return mock.instruments.filter((i) => !s || i.ticker.toLowerCase().includes(s) || i.name.toLowerCase().includes(s));
+  const found = mock.instruments.filter((i) => !s || i.ticker.toLowerCase().includes(s) || i.name.toLowerCase().includes(s));
+  if (!sellableOnly) return found;
+  return found.flatMap((i) => { const { free } = sellable(i.ticker); return free >= 1 ? [{ ...i, sellableShares: free }] : []; });
 }
 
-export async function previewOrder(b: { ticker: string; side: Side; sizePercent: number }): Promise<Preview> {
-  return USE_MOCK ? mockPreview(b.ticker, b.sizePercent, b.side) : post('/api/orders/preview', b);
+export async function previewOrder(b: { ticker: string; side: Side; sizePercent?: number; amountUsd?: number }): Promise<Preview> {
+  return USE_MOCK ? mockPreview(b.ticker, b, b.side) : post('/api/orders/preview', b);
 }
 
 export async function createOrder(b: NewOrder): Promise<{ order: Order }> {
@@ -150,14 +155,14 @@ export async function createOrder(b: NewOrder): Promise<{ order: Order }> {
     changed();
     return r;
   }
-  const p = mockPreview(b.ticker, b.sizePercent, b.side);
+  const p = mockPreview(b.ticker, b, b.side);
   if (!p.allowed) {
     const bad = p.checks.find((c) => c.status === 'FAIL');
-    throw new ApiError(422, 'MANDATE_VIOLATION', b.side === 'SELL' ? (bad?.label ?? 'Cannot sell this amount.') : `Would bring ${b.ticker} to ${b.sizePercent.toFixed(1)}% of NAV; limit is 10%.`, p.checks);
+    throw new ApiError(422, 'MANDATE_VIOLATION', b.side === 'SELL' ? (bad?.label ?? 'Cannot sell this amount.') : `Would bring ${b.ticker} to ${(p.sizePercent ?? 0).toFixed(1)}% of NAV; limit is 10%.`, p.checks);
   }
   const order: Order = {
     id: `ord_${String(orders.length + 1).padStart(3, '0')}`, createdAt: new Date().toISOString(),
-    instrument: mock.instruments.find((i) => i.ticker === b.ticker)!, side: b.side, sizePercent: b.sizePercent,
+    instrument: mock.instruments.find((i) => i.ticker === b.ticker)!, side: b.side, sizePercent: p.sizePercent!,
     requestedAmountCents: p.estimatedAmountCents,
     ...(b.side === 'SELL' ? { requestedQuantity: Math.floor(p.estimatedAmountCents / PRICES[b.ticker]) } : {}),
     pitch: b.pitch, rationale: b.rationale,

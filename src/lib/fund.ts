@@ -70,7 +70,6 @@ const usd = (cents: number) => `USD ${(cents / 100).toLocaleString('en-US', { ma
 const now = () => new Date(process.env.FUND_DEMO_NOW ?? Date.now());
 const nyDate = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 const validDate = (date: unknown): date is string => typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
-export const searchInstruments = (q: string) => instruments.filter((i) => `${i.ticker} ${i.name}`.toLowerCase().includes(q.trim().toLowerCase()));
 export const listOrders = readOrders;
 export const listRuns = readRuns;
 
@@ -100,17 +99,36 @@ function sellAvailability(ticker: string, held: number, excludingId?: string) {
   return held - reserved;
 }
 
-export function previewOrder(body: { ticker?: unknown; side?: unknown; sizePercent?: unknown }): Preview {
+// With sellableOnly, only instruments the fund can actually sell are returned, each with the shares still free to sell.
+export function searchInstruments(q: string, sellableOnly = false): Instrument[] {
+  const found = instruments.filter((i) => `${i.ticker} ${i.name}`.toLowerCase().includes(q.trim().toLowerCase()));
+  if (!sellableOnly) return found;
+  const { holdings } = currentAmounts();
+  return found.flatMap((i) => {
+    const available = sellAvailability(i.ticker, holdings.get(i.ticker) ?? 0);
+    return available >= i.lotSize ? [{ ...i, sellableShares: available }] : [];
+  });
+}
+
+// The order size is either sizePercent (% of NAV) or amountUsd (US dollars, up to 2 decimals)S
+export function previewOrder(body: { ticker?: unknown; side?: unknown; sizePercent?: unknown; amountUsd?: unknown }): Preview {
   const i = instrument(body.ticker);
   if (body.side !== 'BUY' && body.side !== 'SELL') fail(400, 'UNSUPPORTED_SIDE', 'Choose buy or sell.');
+  const byAmount = body.amountUsd !== undefined;
+  if (byAmount && body.sizePercent !== undefined) fail(400, 'INVALID_SIZE', 'Give a percent of NAV or a dollar amount, not both.');
   const size = body.sizePercent;
-  if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0 || Math.abs(Math.round(size * 100) - size * 100) > 1e-8) throw new FundError(400, 'INVALID_SIZE', 'Size must be greater than zero with at most two decimal places.');
+  if (byAmount) {
+    const usdAmount = body.amountUsd;
+    if (typeof usdAmount !== 'number' || !Number.isFinite(usdAmount) || usdAmount <= 0 || Math.abs(Math.round(usdAmount * 100) - usdAmount * 100) > 1e-8) fail(400, 'INVALID_SIZE', 'Amount must be greater than zero dollars, with at most two decimal places.');
+  } else if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0 || Math.abs(Math.round(size * 100) - size * 100) > 1e-8) throw new FundError(400, 'INVALID_SIZE', 'Size must be greater than zero with at most two decimal places.');
   const { cash, nav, holdings, commitments, committed, close } = currentAmounts();
-  const amount = Math.round(nav * size / 100);
+  const amount = byAmount ? Math.round((body.amountUsd as number) * 100) : Math.round(nav * (size as number) / 100);
+  const sizePercent = byAmount ? Math.round(amount / nav * 10_000) / 100 : size as number;
+  const price = close.prices[i.ticker as keyof typeof close.prices];
   if (body.side === 'SELL') {
     const held = holdings.get(i.ticker) ?? 0;
     const available = sellAvailability(i.ticker, held);
-    const quantity = lotQuantity(amount, close.prices[i.ticker as keyof typeof close.prices], i.lotSize);
+    const quantity = lotQuantity(amount, price, i.lotSize);
     const checks: Check[] = [
       { code: 'POSITION_LIMIT', label: 'Position weight (a sale lowers it)', status: 'NA' },
       { code: 'SECTOR_LIMIT', label: `${i.sector} sector (a sale lowers it)`, status: 'NA' },
@@ -118,9 +136,10 @@ export function previewOrder(body: { ticker?: unknown; side?: unknown; sizePerce
       { code: 'SHARES_HELD', label: `Shares to sell: ${quantity} (${available} available of ${held} held)`, status: quantity > 0 && quantity <= available ? 'PASS' : 'FAIL' },
       { code: 'INSTRUMENT_TYPE', label: 'Instrument type allowed (stock)', status: 'PASS' },
     ];
-    return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks };
+    // Max sell is every unreserved share at the latest close.
+    return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks, sizePercent, maxAmountCents: Math.max(available, 0) * price };
   }
-  const tickerValue = (holdings.get(i.ticker) ?? 0) * close.prices[i.ticker as keyof typeof close.prices];
+  const tickerValue = (holdings.get(i.ticker) ?? 0) * price;
   const pendingTicker = commitments.filter((o) => o.instrument.ticker === i.ticker).reduce((s, o) => s + o.requestedAmountCents, 0);
   const sectorValue = [...holdings].reduce((s, [ticker, qty]) => s + (instrument(ticker).sector === i.sector ? qty * close.prices[ticker as keyof typeof close.prices] : 0), 0);
   const pendingSector = commitments.filter((o) => o.instrument.sector === i.sector).reduce((s, o) => s + o.requestedAmountCents, 0);
@@ -135,7 +154,12 @@ export function previewOrder(body: { ticker?: unknown; side?: unknown; sizePerce
     { code: 'SHARES_HELD', label: 'Shares held to sell', status: 'NA' },
     { code: 'INSTRUMENT_TYPE', label: 'Instrument type allowed (stock)', status: 'PASS' },
   ];
-  return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks };
+  // Max buy is the largest amount that still passes the position, sector and cash checks (integer cents).
+  const positionRoom = Math.floor((nav * 10 - 100 * (tickerValue + pendingTicker)) / 100);
+  const sectorRoom = Math.floor((nav * 30 - 100 * (sectorValue + pendingSector)) / 100);
+  let cashRoom = Math.floor(freeCash / (1 + FEE_RATE));
+  while (cashRoom > 0 && cashRoom + Math.round(cashRoom * FEE_RATE) > freeCash) cashRoom--;
+  return { allowed: checks.every((c) => c.status !== 'FAIL'), estimatedAmountCents: amount, checks, sizePercent, maxAmountCents: Math.max(0, Math.min(positionRoom, sectorRoom, cashRoom)) };
 }
 
 export const createOrder = db.transaction((body: NewOrder): Order => {
@@ -148,7 +172,8 @@ export const createOrder = db.transaction((body: NewOrder): Order => {
   const requestedQuantity = body.side === 'SELL'
     ? lotQuantity(preview.estimatedAmountCents, close.prices[i.ticker as keyof typeof close.prices], i.lotSize)
     : undefined;
-  const order: Order = { id: '', createdAt: now().toISOString(), instrument: i, side: body.side, sizePercent: body.sizePercent, requestedAmountCents: preview.estimatedAmountCents, ...(requestedQuantity === undefined ? {} : { requestedQuantity }), pitch: body.pitch.trim(), rationale: body.rationale.trim(), submittedBy: submitter, status: 'PENDING', decision: null, fill: null };
+  // sizePercent comes from the preview so dollar-amount orders store the equivalent % of NAV.
+  const order: Order = { id: '', createdAt: now().toISOString(), instrument: i, side: body.side, sizePercent: preview.sizePercent!, requestedAmountCents: preview.estimatedAmountCents, ...(requestedQuantity === undefined ? {} : { requestedQuantity }), pitch: body.pitch.trim(), rationale: body.rationale.trim(), submittedBy: submitter, status: 'PENDING', decision: null, fill: null };
   const result = db.prepare('INSERT INTO orders (payload) VALUES (?)').run(JSON.stringify(order));
   order.id = `ord_${String(result.lastInsertRowid).padStart(3, '0')}`;
   db.prepare('UPDATE orders SET payload = ? WHERE id = ?').run(JSON.stringify(order), result.lastInsertRowid);

@@ -4,9 +4,11 @@ export type OrderStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'F
 export type CheckStatus = 'PASS' | 'FAIL' | 'NA';
 export type DecisionAction = 'APPROVE' | 'REJECT' | 'CANCEL';
 
-export interface Instrument { ticker: string; name: string; exchange: string; currency: string; sector: string; type: string; lotSize: number }
+// sellableShares is only set when searching with sellable=true: shares held minus shares already reserved by pending or approved sells.
+export interface Instrument { ticker: string; name: string; exchange: string; currency: string; sector: string; type: string; lotSize: number; sellableShares?: number }
 export interface Check { code: string; label: string; status: CheckStatus }
-export interface Preview { allowed: boolean; estimatedAmountCents: number; checks: Check[] }
+// sizePercent is the order size as % of NAV. maxAmountCents is the largest order of this side that would pass every check right now (0 if none).
+export interface Preview { allowed: boolean; estimatedAmountCents: number; checks: Check[]; sizePercent?: number; maxAmountCents?: number }
 export interface Person { id: string; name: string }
 export interface Decision { action: DecisionAction; by: Person; at: string; reason: string | null }
 export interface OrderEvent {
@@ -20,7 +22,8 @@ export interface Order {
   requestedAmountCents: number; requestedQuantity?: number; pitch: string; rationale: string; submittedBy: Person;
   status: OrderStatus; decision: Decision | null; fill: Fill | null;
 }
-export interface NewOrder { actorId: string; ticker: string; side: Side; sizePercent: number; pitch: string; rationale: string }
+// Give either sizePercent (% of NAV) or amountUsd (US dollars, up to 2 decimals, e.g. 60000 or 1234.56), not both.
+export interface NewOrder { actorId: string; ticker: string; side: Side; sizePercent?: number; amountUsd?: number; pitch: string; rationale: string }
 export interface DecisionRequest { actorId: string; action: DecisionAction; reason?: string }
 export interface ValuationRun { date: string; status: string; filledOrderIds: string[]; navCents: number; cashCents: number; at?: string }
 export interface Dashboard {
